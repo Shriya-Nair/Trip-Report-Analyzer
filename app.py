@@ -52,8 +52,8 @@ def load_files(files_data: list[tuple]) -> pd.DataFrame:
             
             # Handle empty trips: assign "EMPTY TRIP" as client for trips with no client
             # This happens when Trip Type is "Empty"
-            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"].isna()), "Client"] = "EMPTY TRIP - NO CLIENT"
-            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"] == ""), "Client"] = "EMPTY TRIP - NO CLIENT"
+            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"].isna()), "Client"] = "EMPTY TRIP"
+            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"] == ""), "Client"] = "EMPTY TRIP"
             
             # Check for Source column (can be named Source, Source Place, or Plant)
             source_col = None
@@ -113,7 +113,7 @@ if uploaded_files:
                   delta=f"{(empty_trips_all/total_trips_all*100):.1f}%" if total_trips_all > 0 else "0%")
     
     st.success(f"✅ Loaded **{len(df):,}** trip records from **{len(files_data)}** file(s).")
-    st.info("💡 **Note:** Empty trips are shown under 'EMPTY TRIP - NO CLIENT' in the client dropdown, as they don't have a specific client association.")
+    st.info("💡 **Note:** Empty trips are shown under 'EMPTY TRIP - NO CLIENT'")
 
     # ── Filters row ──────────────────────────────────────────────────────────
     # Get all clients including the special empty trip client
