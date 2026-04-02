@@ -376,36 +376,6 @@ if uploaded_files:
                         # Get trips for this destination
                         destination_trips = filtered[filtered["Destination"] == destination].copy()
                         show_trip_details(destination, destination_trips)
-        
-        # Also make the dataframe rows clickable using session state
-        st.markdown("---")
-        st.markdown("#### 📊 Alternative View - Click any row below")
-        
-        # Use st.dataframe with selection (Streamlit 1.25+)
-        event = st.dataframe(
-            dest_summary,
-            use_container_width=True,
-            height=400,
-            hide_index=True,
-            selection_mode="single-row",
-            on_select="rerun",
-            column_config={
-                "Destination": st.column_config.TextColumn("Destination", width="medium"),
-                "Total Trips": st.column_config.NumberColumn("Total Trips", width="small"),
-                "Plants Used": st.column_config.NumberColumn("Plants Used", width="small"),
-                "Loaded Trips": st.column_config.NumberColumn("Loaded", width="small") if "Loaded Trips" in dest_summary.columns else None,
-                "Empty Trips": st.column_config.NumberColumn("Empty", width="small") if "Empty Trips" in dest_summary.columns else None,
-            }
-        )
-        
-        # Handle row selection
-        if hasattr(event, 'selection') and event.selection and hasattr(event.selection, 'rows') and event.selection.rows:
-            selected_row_idx = event.selection.rows[0]
-            selected_destination = dest_summary.iloc[selected_row_idx]['Destination']
-            destination_trips = filtered[filtered["Destination"] == selected_destination].copy()
-            
-            # Show modal for selected row
-            show_trip_details(selected_destination, destination_trips)
 
         # ── Empty Trip Analysis (when viewing empty trips) ─────────────────────
         if selected_client.startswith("EMPTY TRIP"):
