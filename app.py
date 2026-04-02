@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import plotly.express as px
+from streamlit_option_menu import option_menu
 
 st.set_page_config(page_title="Trip Report Analyzer", page_icon="🚛", layout="wide")
 
@@ -15,13 +17,143 @@ st.markdown("""
         padding: 20px 24px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.08);
         text-align: center;
+        transition: transform 0.2s;
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
     }
     .metric-number { font-size: 2.2rem; font-weight: 700; color: #1a73e8; }
     .metric-label  { font-size: 0.85rem; color: #666; margin-top: 4px; }
     h1 { color: #1a1a2e; }
     .stDataFrame { border-radius: 10px; overflow: hidden; }
+    .drill-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 10px;
+        padding: 4px 12px;
+        color: white;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .drill-card:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    div[data-testid="stModal"] {
+        background-color: rgba(0,0,0,0.5);
+    }
+    .stButton button {
+        background: linear-gradient(90deg, #1a73e8, #0d47a1);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+        transition: all 0.3s;
+    }
+    .stButton button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(26,115,232,0.3);
+    }
+    .searchable-dropdown {
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Custom Searchable Dropdown Component ─────────────────────────────────────
+def searchable_dropdown(options, key, label="Select Option", placeholder="Type to search..."):
+    """
+    Create a searchable dropdown using text input + selectbox
+    """
+    if not options:
+        return None
+    
+    # Create search box
+    search_term = st.text_input(
+        f"🔍 Search {label}", 
+        placeholder=placeholder,
+        key=f"search_{key}"
+    )
+    
+    # Filter options based on search term
+    if search_term:
+        filtered_options = [opt for opt in options if search_term.lower() in str(opt).lower()]
+        if not filtered_options:
+            filtered_options = ["No results found"]
+    else:
+        filtered_options = options
+    
+    # Show selected count
+    st.caption(f"📋 {len(filtered_options)} options available" if not search_term else f"📋 Found {len(filtered_options)} matching options")
+    
+    # Select from filtered options
+    selected = st.selectbox(
+        label,
+        filtered_options,
+        key=f"select_{key}",
+        disabled=len(filtered_options) == 0 or filtered_options[0] == "No results found"
+    )
+    
+    if selected == "No results found":
+        return None
+    return selected
+
+# ── Drill-Down Modal Component ───────────────────────────────────────────────
+@st.dialog("📋 Trip Details", width="large")
+def show_trip_details(destination, trips_df):
+    """
+    Display detailed trip information in a modal dialog
+    """
+    st.markdown(f"### 🚛 Trips to **{destination}**")
+    st.markdown(f"**Total Trips:** {len(trips_df)}")
+    
+    # Display key metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Trips", len(trips_df))
+    with col2:
+        if "Trip Type" in trips_df.columns:
+            loaded = len(trips_df[trips_df["Trip Type"] == "Loaded"])
+            st.metric("Loaded Trips", loaded)
+    with col3:
+        if "Plant" in trips_df.columns:
+            plants = trips_df["Plant"].nunique()
+            st.metric("Plants Used", plants)
+    
+    st.divider()
+    
+    # Show detailed table
+    st.subheader("📊 Detailed Trip List")
+    
+    # Select columns to display
+    display_cols = ["Trip No", "Start Date", "Trip Type", "Client", "Plant", "Source File"]
+    available_cols = [col for col in display_cols if col in trips_df.columns]
+    
+    st.dataframe(
+        trips_df[available_cols],
+        use_container_width=True,
+        height=400,
+        hide_index=True,
+        column_config={
+            "Trip No": "Trip Number",
+            "Start Date": st.column_config.DateColumn("Date"),
+            "Trip Type": st.column_config.TextColumn("Type"),
+            "Client": st.column_config.TextColumn("Client"),
+            "Plant": st.column_config.TextColumn("Source Plant"),
+            "Source File": st.column_config.TextColumn("Report Source")
+        }
+    )
+    
+    # Download button for this specific destination
+    csv = trips_df[available_cols].to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download this destination's trips (CSV)",
+        data=csv,
+        file_name=f"trips_to_{destination}.csv",
+        mime="text/csv",
+    )
 
 # ── Header ───────────────────────────────────────────────────────────────────
 st.title("🚛 Monthly Trip Report Analyzer")
@@ -36,7 +168,6 @@ uploaded_files = st.file_uploader(
     help="You can upload multiple monthly reports at once."
 )
 
-# Updated required columns - Trip Type is now required
 REQUIRED_COLS = {"Client", "Destination", "Start Date", "Trip No", "Trip Type"}
 
 @st.cache_data
@@ -50,12 +181,11 @@ def load_files(files_data: list[tuple]) -> pd.DataFrame:
                 st.warning(f"⚠️ **{name}** is missing columns: {missing}. Skipping.")
                 continue
             
-            # Handle empty trips: assign "EMPTY TRIP" as client for trips with no client
-            # This happens when Trip Type is "Empty"
-            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"].isna()), "Client"] = "EMPTY TRIP"
-            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"] == ""), "Client"] = "EMPTY TRIP"
+            # Handle empty trips: assign "EMPTY TRIP - NO CLIENT" as client for trips with no client
+            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"].isna()), "Client"] = "EMPTY TRIP - NO CLIENT"
+            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"] == ""), "Client"] = "EMPTY TRIP - NO CLIENT"
             
-            # Check for Source column (can be named Source, Source Place, or Plant)
+            # Check for Source column
             source_col = None
             for col in ["Source", "Source Place", "Plant", "Origin", "From"]:
                 if col in df.columns:
@@ -69,6 +199,7 @@ def load_files(files_data: list[tuple]) -> pd.DataFrame:
                 st.info(f"📌 **{name}** doesn't have a Source/Plant column. Using 'All Plants' as default.")
             
             df["_source_file"] = name
+            df["Source File"] = name  # For display
             frames.append(df)
         except Exception as e:
             st.error(f"Could not read **{name}**: {e}")
@@ -113,42 +244,67 @@ if uploaded_files:
                   delta=f"{(empty_trips_all/total_trips_all*100):.1f}%" if total_trips_all > 0 else "0%")
     
     st.success(f"✅ Loaded **{len(df):,}** trip records from **{len(files_data)}** file(s).")
-    st.info("💡 **Note:** Empty trips are shown under 'EMPTY TRIP - NO CLIENT'")
+    st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
 
-    # ── Filters row ──────────────────────────────────────────────────────────
+    # ── Filters with Searchable Dropdowns ─────────────────────────────────────
+    st.subheader("🔍 Filter Your Data")
+    
     # Get all clients including the special empty trip client
     clients = sorted(df["Client"].dropna().unique().tolist())
-    
-    # Separate regular clients from empty trips
     regular_clients = [c for c in clients if not c.startswith("EMPTY TRIP")]
     empty_trip_option = [c for c in clients if c.startswith("EMPTY TRIP")]
-    
-    # Create organized dropdown
     client_options = regular_clients + (empty_trip_option if empty_trip_option else [])
     
-    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-
-    with col1:
-        selected_client = st.selectbox("🏢 Select Client", client_options)
+    # Create 2 columns for filters
+    col1, col2 = st.columns(2)
     
-    # Filter plants based on selected client
-    client_plants = df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist()
-    client_plants = sorted(client_plants) if client_plants else ["All Plants"]
-    plant_options = ["All Plants"] + client_plants
+    with col1:
+        st.markdown("#### 🏢 Client Selection")
+        # Searchable client dropdown
+        selected_client = searchable_dropdown(
+            client_options, 
+            "client", 
+            "Select Client", 
+            "Type client name to search..."
+        )
+        
+        if not selected_client:
+            st.warning("Please select a client")
+            st.stop()
     
     with col2:
-        selected_plant = st.selectbox("🏭 Select Plant/Source", plant_options)
-
-    months = sorted(df["Month"].dropna().unique().tolist(), reverse=True)
-    month_options = ["All Months"] + months
-
+        st.markdown("#### 🏭 Plant Selection")
+        # Get plants for selected client
+        client_plants = df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist()
+        client_plants = sorted(client_plants) if client_plants else ["All Plants"]
+        plant_options = ["All Plants"] + client_plants
+        
+        # Searchable plant dropdown
+        selected_plant = searchable_dropdown(
+            plant_options,
+            "plant",
+            "Select Plant/Source",
+            "Type plant name to search..."
+        )
+        if not selected_plant:
+            selected_plant = "All Plants"
+    
+    # Second row of filters
+    col3, col4, col5 = st.columns(3)
+    
     with col3:
+        months = sorted(df["Month"].dropna().unique().tolist(), reverse=True)
+        month_options = ["All Months"] + months
         selected_month = st.selectbox("📅 Select Month", month_options)
-
+    
     with col4:
-        # Trip Type filter - now with all types including empty
         trip_type_options = ["All Types"] + sorted(df["Trip Type"].dropna().unique().tolist())
         selected_type = st.selectbox("🔄 Trip Type", trip_type_options)
+    
+    with col5:
+        # Add a clear filters button
+        if st.button("🗑️ Clear All Filters", use_container_width=True):
+            st.rerun()
 
     st.divider()
 
@@ -216,11 +372,13 @@ if uploaded_files:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Destination Summary Table ─────────────────────────────────────────────
+    # ── Destination Summary Table with Clickable Rows ─────────────────────────
     if selected_client.startswith("EMPTY TRIP"):
         st.subheader(f"📍 Empty Trip Destinations (No Client Association)")
+        st.caption("💡 **Click on any destination** to see detailed trip information")
     else:
         st.subheader(f"📍 Trips to Each Destination — {selected_client}")
+        st.caption("💡 **Click on any destination** to see detailed trip information")
     
     if selected_plant != "All Plants":
         st.caption(f"🏭 Filtered by Plant: **{selected_plant}**")
@@ -228,13 +386,12 @@ if uploaded_files:
     if filtered.empty:
         st.info("No trips found for the selected filters.")
     else:
-        # Build destination summary based on available data
+        # Build destination summary
         agg_dict = {
             "Total_Trips": ("Trip No", "count"),
             "Plants": ("Plant", lambda x: x.nunique())
         }
         
-        # Add loaded/empty breakdown only if both types exist in filtered data
         if "Trip Type" in filtered.columns:
             if len(filtered["Trip Type"].unique()) > 1:
                 agg_dict["Loaded_Trips"] = ("Trip Type", lambda x: (x == "Loaded").sum())
@@ -251,24 +408,89 @@ if uploaded_files:
         if "Loaded_Trips" in dest_summary.columns:
             dest_summary = dest_summary.rename(columns={"Loaded_Trips": "Loaded Trips", "Empty_Trips": "Empty Trips"})
 
-        # Show bar chart and table
+        # Create interactive chart with plotly (for click events)
+        fig = px.bar(
+            dest_summary.head(20), 
+            x="Destination", 
+            y="Total Trips",
+            title="Top 20 Destinations by Trip Count",
+            color="Total Trips",
+            color_continuous_scale="Blues",
+            text="Total Trips"
+        )
+        fig.update_traces(textposition='outside', hovertemplate='<b>%{x}</b><br>Trips: %{y}<extra></extra>')
+        fig.update_layout(
+            xaxis_tickangle=-45,
+            height=500,
+            clickmode='event+select'
+        )
+        
+        # Display chart and table in columns
         chart_col, table_col = st.columns([1, 1])
+        
         with chart_col:
-            st.bar_chart(dest_summary.set_index("Destination")["Total Trips"], height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        
         with table_col:
-            st.dataframe(
-                dest_summary,
-                use_container_width=True,
-                height=400,
-                hide_index=True,
-            )
+            # Create an interactive table with clickable rows
+            st.markdown("#### 📋 Destinations Summary")
+            
+            # Display table with a special column for drill-down button
+            display_df = dest_summary.copy()
+            
+            # Add a clickable button column
+            for idx, row in display_df.iterrows():
+                destination = row['Destination']
+                col1, col2, col3 = st.columns([0.7, 0.2, 0.1])
+                with col1:
+                    st.write(f"**{destination}**")
+                with col2:
+                    st.write(f"{row['Total Trips']} trips")
+                with col3:
+                    # Create a button for each destination
+                    if st.button("🔍", key=f"drill_{destination}_{idx}", help=f"View details for {destination}"):
+                        # Get trips for this destination
+                        destination_trips = filtered[filtered["Destination"] == destination].copy()
+                        show_trip_details(destination, destination_trips)
+            
+            # Alternative: Use dataframe with selection
+            st.info("💡 **Tip:** Click the 🔍 button next to any destination to see detailed trip information!")
+        
+        # Also make the dataframe rows clickable using session state
+        st.markdown("---")
+        st.markdown("#### 📊 Alternative View - Click any row below")
+        
+        # Use st.dataframe with selection (Streamlit 1.25+)
+        event = st.dataframe(
+            dest_summary,
+            use_container_width=True,
+            height=400,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            column_config={
+                "Destination": st.column_config.TextColumn("Destination", width="medium"),
+                "Total Trips": st.column_config.NumberColumn("Total Trips", width="small"),
+                "Plants Used": st.column_config.NumberColumn("Plants Used", width="small"),
+                "Loaded Trips": st.column_config.NumberColumn("Loaded", width="small") if "Loaded Trips" in dest_summary.columns else None,
+                "Empty Trips": st.column_config.NumberColumn("Empty", width="small") if "Empty Trips" in dest_summary.columns else None,
+            }
+        )
+        
+        # Handle row selection
+        if hasattr(event, 'selection') and event.selection and hasattr(event.selection, 'rows') and event.selection.rows:
+            selected_row_idx = event.selection.rows[0]
+            selected_destination = dest_summary.iloc[selected_row_idx]['Destination']
+            destination_trips = filtered[filtered["Destination"] == selected_destination].copy()
+            
+            # Show modal for selected row
+            show_trip_details(selected_destination, destination_trips)
 
         # ── Empty Trip Analysis (when viewing empty trips) ─────────────────────
         if selected_client.startswith("EMPTY TRIP"):
             st.divider()
             st.subheader("🔄 Empty Trip Movement Analysis")
             
-            # Show source to destination matrix for empty trips
             empty_movement = (
                 filtered.groupby(["Plant", "Destination"])
                 .size()
@@ -277,10 +499,14 @@ if uploaded_files:
                 .head(20)
             )
             
-            st.dataframe(
+            # Make empty movement interactive
+            st.markdown("**Click on any row in the table below to see details**")
+            movement_event = st.dataframe(
                 empty_movement,
                 use_container_width=True,
                 hide_index=True,
+                selection_mode="single-row",
+                on_select="rerun",
                 column_config={
                     "Plant": "Source Plant",
                     "Destination": "Destination",
@@ -288,45 +514,14 @@ if uploaded_files:
                 }
             )
             
-            # Show top source plants for empty trips
-            col_source, col_dest = st.columns(2)
-            with col_source:
-                st.subheader("🏭 Top Source Plants for Empty Trips")
-                top_sources = filtered.groupby("Plant").size().reset_index(name="Empty Trips").sort_values("Empty Trips", ascending=False).head(10)
-                st.bar_chart(top_sources.set_index("Plant")["Empty Trips"])
-            
-            with col_dest:
-                st.subheader("📍 Top Destinations for Empty Trips")
-                top_dests = filtered.groupby("Destination").size().reset_index(name="Empty Trips").sort_values("Empty Trips", ascending=False).head(10)
-                st.bar_chart(top_dests.set_index("Destination")["Empty Trips"])
-
-        # ── Plant breakdown section ───────────────────────────────────────────
-        elif selected_plant == "All Plants" and unique_plants > 1:
-            st.divider()
-            st.subheader("🏭 Trip Distribution by Plant")
-            
-            plant_summary = (
-                filtered.groupby("Plant")
-                .agg(
-                    Total_Trips=("Trip No", "count"),
-                    Loaded_Trips=("Trip Type", lambda x: (x == "Loaded").sum()),
-                    Empty_Trips=("Trip Type", lambda x: (x == "Empty").sum()),
-                    Unique_Destinations=("Destination", "nunique")
-                )
-                .reset_index()
-                .sort_values("Total_Trips", ascending=False)
-            )
-            
-            col_pie, col_plant_table = st.columns([1, 1])
-            with col_pie:
-                st.bar_chart(plant_summary.set_index("Plant")["Total_Trips"], height=300)
-            with col_plant_table:
-                st.dataframe(
-                    plant_summary,
-                    use_container_width=True,
-                    height=300,
-                    hide_index=True,
-                )
+            if hasattr(movement_event, 'selection') and movement_event.selection and hasattr(movement_event.selection, 'rows') and movement_event.selection.rows:
+                selected_row_idx = movement_event.selection.rows[0]
+                selected_route = empty_movement.iloc[selected_row_idx]
+                route_trips = filtered[
+                    (filtered["Plant"] == selected_route["Plant"]) & 
+                    (filtered["Destination"] == selected_route["Destination"])
+                ].copy()
+                show_trip_details(f"{selected_route['Plant']} → {selected_route['Destination']}", route_trips)
 
         # ── Download button ───────────────────────────────────────────────────
         st.divider()
@@ -334,14 +529,6 @@ if uploaded_files:
         with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
             dest_summary.to_excel(writer, sheet_name="Destination Summary", index=False)
             filtered.to_excel(writer, sheet_name="Raw Trips", index=False)
-            
-            # Add plant summary sheet if multiple plants and not empty trips only
-            if not selected_client.startswith("EMPTY TRIP") and selected_plant == "All Plants" and unique_plants > 1:
-                plant_summary.to_excel(writer, sheet_name="Plant Summary", index=False)
-            
-            # Add empty trip analysis if viewing empty trips
-            if selected_client.startswith("EMPTY TRIP"):
-                empty_movement.to_excel(writer, sheet_name="Empty Trip Movement", index=False)
             
         export_buf.seek(0)
 
@@ -355,46 +542,6 @@ if uploaded_files:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-        # ── Monthly trend (if All Months selected) ────────────────────────────
-        if selected_month == "All Months" and unique_months > 1:
-            st.divider()
-            st.subheader("📈 Monthly Trip Trend")
-            
-            if "Trip Type" in filtered.columns and len(filtered["Trip Type"].unique()) > 1:
-                # Show trend by trip type
-                monthly_type = (
-                    filtered.groupby(["Month", "Trip Type"])["Trip No"]
-                    .count()
-                    .reset_index()
-                    .rename(columns={"Trip No": "Trips"})
-                    .sort_values("Month")
-                )
-                pivot_type = monthly_type.pivot(index="Month", columns="Trip Type", values="Trips").fillna(0)
-                st.line_chart(pivot_type)
-            else:
-                monthly = (
-                    filtered.groupby("Month")["Trip No"]
-                    .count()
-                    .reset_index()
-                    .rename(columns={"Trip No": "Trips"})
-                    .sort_values("Month")
-                )
-                st.line_chart(monthly.set_index("Month")["Trips"])
-            
-            # Optional: Plant-wise monthly trend
-            if not selected_client.startswith("EMPTY TRIP") and selected_plant == "All Plants" and unique_plants > 1:
-                st.subheader("🏭 Monthly Trend by Plant")
-                plant_monthly = (
-                    filtered.groupby(["Month", "Plant"])["Trip No"]
-                    .count()
-                    .reset_index()
-                    .rename(columns={"Trip No": "Trips"})
-                    .sort_values("Month")
-                )
-                # Pivot for better visualization
-                pivot_data = plant_monthly.pivot(index="Month", columns="Plant", values="Trips").fillna(0)
-                st.line_chart(pivot_data)
-
 else:
     # ── Empty state ───────────────────────────────────────────────────────────
     st.markdown("""
@@ -403,7 +550,11 @@ else:
         <h3 style="color:#555;">No file uploaded yet</h3>
         <p>Upload your monthly trip report(s) above to get started.</p>
         <p style="font-size:0.85rem; margin-top:10px;"><strong>Required columns:</strong> <code>Client</code>, <code>Destination</code>, <code>Start Date</code>, <code>Trip No</code>, <code>Trip Type</code><br>
-        <strong>How Empty Trips work:</strong> Rows with Trip Type = "Empty" will appear under "EMPTY TRIP - NO CLIENT" in the client dropdown.<br>
+        <strong>Features:</strong><br>
+        • 🔍 <strong>Searchable dropdowns</strong> - Type to filter long lists of clients and plants<br>
+        • 🔍 <strong>Drill-down modal</strong> - Click on any destination to see detailed trip information<br>
+        • 📊 <strong>Interactive charts</strong> - Click on bars to explore data<br>
+        • 🎯 <strong>Clickable tables</strong> - Select rows to view detailed trip lists<br>
         <strong>Optional:</strong> <code>Source</code>, <code>Source Place</code>, or <code>Plant</code> for plant-level filtering</p>
     </div>
     """, unsafe_allow_html=True)
