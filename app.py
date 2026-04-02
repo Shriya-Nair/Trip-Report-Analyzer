@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import plotly.express as px
-from streamlit_option_menu import option_menu
 
 st.set_page_config(page_title="Trip Report Analyzer", page_icon="🚛", layout="wide")
 
@@ -27,19 +26,6 @@ st.markdown("""
     .metric-label  { font-size: 0.85rem; color: #666; margin-top: 4px; }
     h1 { color: #1a1a2e; }
     .stDataFrame { border-radius: 10px; overflow: hidden; }
-    .drill-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 10px;
-        padding: 4px 12px;
-        color: white;
-        font-size: 0.8rem;
-        cursor: pointer;
-        transition: all 0.3s;
-    }
-    .drill-card:hover {
-        transform: scale(1.05);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    }
     div[data-testid="stModal"] {
         background-color: rgba(0,0,0,0.5);
     }
@@ -56,49 +42,8 @@ st.markdown("""
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(26,115,232,0.3);
     }
-    .searchable-dropdown {
-        margin-bottom: 1rem;
-    }
 </style>
 """, unsafe_allow_html=True)
-
-# ── Custom Searchable Dropdown Component ─────────────────────────────────────
-def searchable_dropdown(options, key, label="Select Option", placeholder="Type to search..."):
-    """
-    Create a searchable dropdown using text input + selectbox
-    """
-    if not options:
-        return None
-    
-    # Create search box
-    search_term = st.text_input(
-        f"🔍 Search {label}", 
-        placeholder=placeholder,
-        key=f"search_{key}"
-    )
-    
-    # Filter options based on search term
-    if search_term:
-        filtered_options = [opt for opt in options if search_term.lower() in str(opt).lower()]
-        if not filtered_options:
-            filtered_options = ["No results found"]
-    else:
-        filtered_options = options
-    
-    # Show selected count
-    st.caption(f"📋 {len(filtered_options)} options available" if not search_term else f"📋 Found {len(filtered_options)} matching options")
-    
-    # Select from filtered options
-    selected = st.selectbox(
-        label,
-        filtered_options,
-        key=f"select_{key}",
-        disabled=len(filtered_options) == 0 or filtered_options[0] == "No results found"
-    )
-    
-    if selected == "No results found":
-        return None
-    return selected
 
 # ── Drill-Down Modal Component ───────────────────────────────────────────────
 @st.dialog("📋 Trip Details", width="large")
@@ -246,7 +191,7 @@ if uploaded_files:
     st.success(f"✅ Loaded **{len(df):,}** trip records from **{len(files_data)}** file(s).")
     st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
 
-    # ── Filters with Searchable Dropdowns ─────────────────────────────────────
+    # ── Filters ─────────────────────────────────────────────────────────────
     st.subheader("🔍 Filter Your Data")
     
     # Get all clients including the special empty trip client
@@ -259,35 +204,14 @@ if uploaded_files:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 🏢 Client Selection")
-        # Searchable client dropdown
-        selected_client = searchable_dropdown(
-            client_options, 
-            "client", 
-            "Select Client", 
-            "Type client name to search..."
-        )
-        
-        if not selected_client:
-            st.warning("Please select a client")
-            st.stop()
+        selected_client = st.selectbox("🏢 Select Client", client_options)
     
     with col2:
-        st.markdown("#### 🏭 Plant Selection")
         # Get plants for selected client
         client_plants = df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist()
         client_plants = sorted(client_plants) if client_plants else ["All Plants"]
         plant_options = ["All Plants"] + client_plants
-        
-        # Searchable plant dropdown
-        selected_plant = searchable_dropdown(
-            plant_options,
-            "plant",
-            "Select Plant/Source",
-            "Type plant name to search..."
-        )
-        if not selected_plant:
-            selected_plant = "All Plants"
+        selected_plant = st.selectbox("🏭 Select Plant/Source", plant_options)
     
     # Second row of filters
     col3, col4, col5 = st.columns(3)
@@ -375,10 +299,10 @@ if uploaded_files:
     # ── Destination Summary Table with Clickable Rows ─────────────────────────
     if selected_client.startswith("EMPTY TRIP"):
         st.subheader(f"📍 Empty Trip Destinations (No Client Association)")
-        st.caption("💡 **Click on any destination** to see detailed trip information")
+        st.caption("💡 **Click on any destination row** to see detailed trip information")
     else:
         st.subheader(f"📍 Trips to Each Destination — {selected_client}")
-        st.caption("💡 **Click on any destination** to see detailed trip information")
+        st.caption("💡 **Click on any destination row** to see detailed trip information")
     
     if selected_plant != "All Plants":
         st.caption(f"🏭 Filtered by Plant: **{selected_plant}**")
@@ -408,7 +332,7 @@ if uploaded_files:
         if "Loaded_Trips" in dest_summary.columns:
             dest_summary = dest_summary.rename(columns={"Loaded_Trips": "Loaded Trips", "Empty_Trips": "Empty Trips"})
 
-        # Create interactive chart with plotly (for click events)
+        # Create interactive chart with plotly
         fig = px.bar(
             dest_summary.head(20), 
             x="Destination", 
@@ -432,29 +356,26 @@ if uploaded_files:
             st.plotly_chart(fig, use_container_width=True)
         
         with table_col:
-            # Create an interactive table with clickable rows
             st.markdown("#### 📋 Destinations Summary")
+            st.info("💡 **Click the 🔍 button next to any destination** to see detailed trip information!")
             
-            # Display table with a special column for drill-down button
-            display_df = dest_summary.copy()
-            
-            # Add a clickable button column
-            for idx, row in display_df.iterrows():
+            # Display table with clickable buttons
+            for idx, row in dest_summary.iterrows():
                 destination = row['Destination']
-                col1, col2, col3 = st.columns([0.7, 0.2, 0.1])
+                col1, col2, col3, col4 = st.columns([0.5, 0.2, 0.2, 0.1])
                 with col1:
                     st.write(f"**{destination}**")
                 with col2:
                     st.write(f"{row['Total Trips']} trips")
                 with col3:
+                    if "Loaded Trips" in row:
+                        st.write(f"🟢 {row['Loaded Trips']} / 🔴 {row['Empty Trips']}")
+                with col4:
                     # Create a button for each destination
                     if st.button("🔍", key=f"drill_{destination}_{idx}", help=f"View details for {destination}"):
                         # Get trips for this destination
                         destination_trips = filtered[filtered["Destination"] == destination].copy()
                         show_trip_details(destination, destination_trips)
-            
-            # Alternative: Use dataframe with selection
-            st.info("💡 **Tip:** Click the 🔍 button next to any destination to see detailed trip information!")
         
         # Also make the dataframe rows clickable using session state
         st.markdown("---")
@@ -499,7 +420,6 @@ if uploaded_files:
                 .head(20)
             )
             
-            # Make empty movement interactive
             st.markdown("**Click on any row in the table below to see details**")
             movement_event = st.dataframe(
                 empty_movement,
@@ -551,7 +471,6 @@ else:
         <p>Upload your monthly trip report(s) above to get started.</p>
         <p style="font-size:0.85rem; margin-top:10px;"><strong>Required columns:</strong> <code>Client</code>, <code>Destination</code>, <code>Start Date</code>, <code>Trip No</code>, <code>Trip Type</code><br>
         <strong>Features:</strong><br>
-        • 🔍 <strong>Searchable dropdowns</strong> - Type to filter long lists of clients and plants<br>
         • 🔍 <strong>Drill-down modal</strong> - Click on any destination to see detailed trip information<br>
         • 📊 <strong>Interactive charts</strong> - Click on bars to explore data<br>
         • 🎯 <strong>Clickable tables</strong> - Select rows to view detailed trip lists<br>
