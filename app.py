@@ -71,7 +71,7 @@ def show_trip_details(destination, trips_df):
             st.metric("Plants Used", plants)
     with col4:
         if total_qty > 0:
-            st.metric("Total Quantity", f"{total_qty:,.0f}")
+            st.metric("Total Quantity", f"{total_qty:,.2f}")  # Changed to 2 decimal places
     
     st.divider()
     
@@ -93,7 +93,7 @@ def show_trip_details(destination, trips_df):
             "Trip Type": st.column_config.TextColumn("Type"),
             "Client": st.column_config.TextColumn("Client"),
             "Plant": st.column_config.TextColumn("Source Plant"),
-            "Inv Qty": st.column_config.NumberColumn("Quantity", format="%.0f"),
+            "Inv Qty": st.column_config.NumberColumn("Quantity", format="%.2f"),  # Changed to 2 decimal places
             "Source File": st.column_config.TextColumn("Report Source")
         }
     )
@@ -152,11 +152,13 @@ def load_files(files_data: list[tuple]) -> pd.DataFrame:
             
             # Ensure Inv Qty column exists, if not create with zeros
             if "Inv Qty" not in df.columns:
-                df["Inv Qty"] = 0
+                df["Inv Qty"] = 0.0
                 st.info(f"📌 **{name}** doesn't have 'Inv Qty' column. Using 0 as default quantity.")
             else:
-                # Convert Inv Qty to numeric, coerce errors to 0
+                # Convert Inv Qty to numeric with decimals preserved
                 df["Inv Qty"] = pd.to_numeric(df["Inv Qty"], errors="coerce").fillna(0)
+                # Keep as float64 to preserve decimals
+                df["Inv Qty"] = df["Inv Qty"].astype(float)
             
             df["_source_file"] = name
             df["Source File"] = name  # For display
@@ -204,7 +206,7 @@ if uploaded_files:
         st.metric("Empty Trips", f"{empty_trips_all:,}",
                   delta=f"{(empty_trips_all/total_trips_all*100):.1f}%" if total_trips_all > 0 else "0%")
     with col4:
-        st.metric("Total Quantity", f"{total_qty_all:,.0f}")
+        st.metric("Total Quantity", f"{total_qty_all:,.2f}")  # Changed to 2 decimal places
     
     st.success(f"✅ Loaded **{len(df):,}** trip records from **{len(files_data)}** file(s).")
     st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
@@ -292,7 +294,7 @@ if uploaded_files:
                 <div class="metric-label">Months Covered</div></div>""", unsafe_allow_html=True)
         with k5:
             st.markdown(f"""<div class="metric-card">
-                <div class="metric-number">{total_qty:,.0f}</div>
+                <div class="metric-number">{total_qty:,.2f}</div>
                 <div class="metric-label">Total Quantity</div></div>""", unsafe_allow_html=True)
     else:
         k1, k2, k3, k4, k5, k6 = st.columns(6)
@@ -318,7 +320,7 @@ if uploaded_files:
                 <div class="metric-label">Plants/Sources</div></div>""", unsafe_allow_html=True)
         with k6:
             st.markdown(f"""<div class="metric-card">
-                <div class="metric-number">{total_qty:,.0f}</div>
+                <div class="metric-number">{total_qty:,.2f}</div>
                 <div class="metric-label">Total Quantity</div></div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -337,7 +339,7 @@ if uploaded_files:
     if filtered.empty:
         st.info("No trips found for the selected filters.")
     else:
-        # Build destination summary with quantity
+        # Build destination summary with quantity (preserving decimals)
         agg_dict = {
             "Total_Trips": ("Trip No", "count"),
             "Total_Qty": ("Inv Qty", "sum"),
@@ -348,8 +350,8 @@ if uploaded_files:
             if len(filtered["Trip Type"].unique()) > 1:
                 agg_dict["Loaded_Trips"] = ("Trip Type", lambda x: (x == "Loaded").sum())
                 agg_dict["Empty_Trips"] = ("Trip Type", lambda x: (x == "Empty").sum())
-                agg_dict["Loaded_Qty"] = ("Inv Qty", lambda x: x[filtered["Trip Type"] == "Loaded"].sum() if len(filtered[filtered["Trip Type"] == "Loaded"]) > 0 else 0)
-                agg_dict["Empty_Qty"] = ("Inv Qty", lambda x: x[filtered["Trip Type"] == "Empty"].sum() if len(filtered[filtered["Trip Type"] == "Empty"]) > 0 else 0)
+                agg_dict["Loaded_Qty"] = ("Inv Qty", lambda x: x[filtered["Trip Type"] == "Loaded"].sum() if len(filtered[filtered["Trip Type"] == "Loaded"]) > 0 else 0.0)
+                agg_dict["Empty_Qty"] = ("Inv Qty", lambda x: x[filtered["Trip Type"] == "Empty"].sum() if len(filtered[filtered["Trip Type"] == "Empty"]) > 0 else 0.0)
         
         dest_summary = (
             filtered.groupby("Destination")
@@ -389,6 +391,7 @@ if uploaded_files:
                 color_continuous_scale="Blues",
                 text="Total Trips"
             )
+            fig.update_traces(textposition='outside')
         else:
             fig = px.bar(
                 dest_summary.head(20), 
@@ -399,9 +402,9 @@ if uploaded_files:
                 color_continuous_scale="Greens",
                 text="Total Quantity"
             )
-            fig.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
+            fig.update_traces(texttemplate='%{text:,.2f}', textposition='outside')  # 2 decimal places
         
-        fig.update_traces(textposition='outside', hovertemplate='<b>%{x}</b><br>%{y:,.0f}<extra></extra>')
+        fig.update_traces(hovertemplate='<b>%{x}</b><br>%{y:,.2f}<extra></extra>')
         fig.update_layout(
             xaxis_tickangle=-45,
             height=500,
@@ -418,7 +421,7 @@ if uploaded_files:
             st.markdown("#### 📋 Destinations Summary")
             st.info("💡 **Click the 🔍 button next to any destination** to see detailed trip information!")
             
-            # Display table with clickable buttons including quantity
+            # Display table with clickable buttons including quantity (with decimals)
             for idx, row in dest_summary.iterrows():
                 destination = row['Destination']
                 col1, col2, col3, col4, col5 = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
@@ -427,7 +430,7 @@ if uploaded_files:
                 with col2:
                     st.write(f"{row['Total Trips']} trips")
                 with col3:
-                    st.write(f"📦 {row['Total Quantity']:,.0f}")
+                    st.write(f"📦 {row['Total Quantity']:,.2f}")  # 2 decimal places
                 with col4:
                     if "Loaded Trips" in row:
                         st.write(f"🟢 {row['Loaded Trips']} / 🔴 {row['Empty Trips']}")
@@ -442,19 +445,19 @@ if uploaded_files:
         st.markdown("---")
         st.markdown("#### 📊 Alternative View - Click any row below")
         
-        # Prepare column config for dataframe
+        # Prepare column config for dataframe with decimal formatting
         column_config = {
             "Destination": st.column_config.TextColumn("Destination", width="medium"),
             "Total Trips": st.column_config.NumberColumn("Total Trips", width="small"),
-            "Total Quantity": st.column_config.NumberColumn("Total Qty", width="small", format="%.0f"),
+            "Total Quantity": st.column_config.NumberColumn("Total Qty", width="small", format="%.2f"),  # 2 decimal places
             "Plants Used": st.column_config.NumberColumn("Plants Used", width="small"),
         }
         
         if "Loaded Trips" in dest_summary.columns:
             column_config["Loaded Trips"] = st.column_config.NumberColumn("Loaded", width="small")
             column_config["Empty Trips"] = st.column_config.NumberColumn("Empty", width="small")
-            column_config["Loaded Quantity"] = st.column_config.NumberColumn("Loaded Qty", width="small", format="%.0f")
-            column_config["Empty Quantity"] = st.column_config.NumberColumn("Empty Qty", width="small", format="%.0f")
+            column_config["Loaded Quantity"] = st.column_config.NumberColumn("Loaded Qty", width="small", format="%.2f")  # 2 decimal places
+            column_config["Empty Quantity"] = st.column_config.NumberColumn("Empty Qty", width="small", format="%.2f")  # 2 decimal places
         
         event = st.dataframe(
             dest_summary,
@@ -475,7 +478,7 @@ if uploaded_files:
             # Show modal for selected row
             show_trip_details(selected_destination, destination_trips)
 
-        # ── Plant Summary with Total Quantity ──────────────────────────────────
+        # ── Plant Summary with Total Quantity (preserving decimals) ────────────
         if selected_plant == "All Plants" and unique_plants > 1:
             st.divider()
             st.subheader("🏭 Trip Distribution by Plant with Quantity")
@@ -495,7 +498,7 @@ if uploaded_files:
             
             col_pie, col_plant_table = st.columns([1, 1])
             with col_pie:
-                # Show quantity by plant
+                # Show quantity by plant with decimals
                 qty_fig = px.bar(
                     plant_summary,
                     x="Plant",
@@ -505,7 +508,7 @@ if uploaded_files:
                     color_continuous_scale="Greens",
                     text="Total_Qty"
                 )
-                qty_fig.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
+                qty_fig.update_traces(texttemplate='%{text:,.2f}', textposition='outside')  # 2 decimal places
                 qty_fig.update_layout(xaxis_tickangle=-45, height=350)
                 st.plotly_chart(qty_fig, use_container_width=True)
             
@@ -518,7 +521,7 @@ if uploaded_files:
                     column_config={
                         "Plant": "Source Plant",
                         "Total_Trips": "Total Trips",
-                        "Total_Qty": st.column_config.NumberColumn("Total Quantity", format="%.0f"),
+                        "Total_Qty": st.column_config.NumberColumn("Total Quantity", format="%.2f"),  # 2 decimal places
                         "Loaded_Trips": "Loaded",
                         "Empty_Trips": "Empty",
                         "Unique_Destinations": "Destinations"
@@ -552,7 +555,7 @@ if uploaded_files:
                     "Plant": "Source Plant",
                     "Destination": "Destination",
                     "Number_of_Empty_Trips": "Trip Count",
-                    "Total_Quantity": st.column_config.NumberColumn("Total Quantity", format="%.0f")
+                    "Total_Quantity": st.column_config.NumberColumn("Total Quantity", format="%.2f")  # 2 decimal places
                 }
             )
             
@@ -598,9 +601,9 @@ else:
         <h3 style="color:#555;">No file uploaded yet</h3>
         <p>Upload your monthly trip report(s) above to get started.</p>
         <p style="font-size:0.85rem; margin-top:10px;"><strong>Required columns:</strong> <code>Client</code>, <code>Destination</code>, <code>Start Date</code>, <code>Trip No</code>, <code>Trip Type</code><br>
-        <strong>Optional columns:</strong> <code>Inv Qty</code> - for quantity analysis<br>
+        <strong>Optional columns:</strong> <code>Inv Qty</code> - for quantity analysis (supports decimals)<br>
         <strong>Features:</strong><br>
-        • 📦 <strong>Total Quantity Column</strong> - Shows sum of "Inv Qty" per destination/plant<br>
+        • 📦 <strong>Decimal Precision</strong> - Shows exact quantities with 2 decimal places<br>
         • 🔍 <strong>Drill-down modal</strong> - Click on any destination to see detailed trip information<br>
         • 📊 <strong>Interactive charts</strong> - Toggle between Trip Count and Quantity views<br>
         • 🎯 <strong>Clickable tables</strong> - Select rows to view detailed trip lists<br>
