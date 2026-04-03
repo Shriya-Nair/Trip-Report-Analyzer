@@ -54,8 +54,11 @@ def show_trip_details(destination, trips_df):
     st.markdown(f"### 🚛 Trips to **{destination}**")
     st.markdown(f"**Total Trips:** {len(trips_df)}")
     
+    # Calculate total quantity if Inv Qty column exists
+    total_qty = trips_df["Inv Qty"].sum() if "Inv Qty" in trips_df.columns else 0
+    
     # Display key metrics
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Total Trips", len(trips_df))
     with col2:
@@ -66,6 +69,9 @@ def show_trip_details(destination, trips_df):
         if "Plant" in trips_df.columns:
             plants = trips_df["Plant"].nunique()
             st.metric("Plants Used", plants)
+    with col4:
+        if total_qty > 0:
+            st.metric("Total Quantity", f"{total_qty:,.0f}")
     
     st.divider()
     
@@ -73,7 +79,7 @@ def show_trip_details(destination, trips_df):
     st.subheader("📊 Detailed Trip List")
     
     # Select columns to display
-    display_cols = ["Trip No", "Start Date", "Trip Type", "Client", "Plant", "Source File"]
+    display_cols = ["Trip No", "Start Date", "Trip Type", "Client", "Plant", "Inv Qty", "Source File"]
     available_cols = [col for col in display_cols if col in trips_df.columns]
     
     st.dataframe(
@@ -87,6 +93,7 @@ def show_trip_details(destination, trips_df):
             "Trip Type": st.column_config.TextColumn("Type"),
             "Client": st.column_config.TextColumn("Client"),
             "Plant": st.column_config.TextColumn("Source Plant"),
+            "Inv Qty": st.column_config.NumberColumn("Quantity", format="%.0f"),
             "Source File": st.column_config.TextColumn("Report Source")
         }
     )
@@ -143,6 +150,14 @@ def load_files(files_data: list[tuple]) -> pd.DataFrame:
                 df["Plant"] = "All Plants"
                 st.info(f"📌 **{name}** doesn't have a Source/Plant column. Using 'All Plants' as default.")
             
+            # Ensure Inv Qty column exists, if not create with zeros
+            if "Inv Qty" not in df.columns:
+                df["Inv Qty"] = 0
+                st.info(f"📌 **{name}** doesn't have 'Inv Qty' column. Using 0 as default quantity.")
+            else:
+                # Convert Inv Qty to numeric, coerce errors to 0
+                df["Inv Qty"] = pd.to_numeric(df["Inv Qty"], errors="coerce").fillna(0)
+            
             df["_source_file"] = name
             df["Source File"] = name  # For display
             frames.append(df)
@@ -174,10 +189,11 @@ if uploaded_files:
         st.stop()
 
     # Show trip type distribution
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     total_trips_all = len(df)
     loaded_trips_all = len(df[df["Trip Type"] == "Loaded"])
     empty_trips_all = len(df[df["Trip Type"] == "Empty"])
+    total_qty_all = df["Inv Qty"].sum() if "Inv Qty" in df.columns else 0
     
     with col1:
         st.metric("Total Trips (All)", f"{total_trips_all:,}")
@@ -187,6 +203,8 @@ if uploaded_files:
     with col3:
         st.metric("Empty Trips", f"{empty_trips_all:,}",
                   delta=f"{(empty_trips_all/total_trips_all*100):.1f}%" if total_trips_all > 0 else "0%")
+    with col4:
+        st.metric("Total Quantity", f"{total_qty_all:,.0f}")
     
     st.success(f"✅ Loaded **{len(df):,}** trip records from **{len(files_data)}** file(s).")
     st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
@@ -251,10 +269,11 @@ if uploaded_files:
     unique_dest = filtered["Destination"].nunique()
     unique_plants = filtered["Plant"].nunique()
     unique_months = filtered["Month"].nunique()
+    total_qty = filtered["Inv Qty"].sum() if "Inv Qty" in filtered.columns else 0
 
     # Show different KPIs based on whether this is empty trips or regular client
     if selected_client.startswith("EMPTY TRIP"):
-        k1, k2, k3, k4 = st.columns(4)
+        k1, k2, k3, k4, k5 = st.columns(5)
         with k1:
             st.markdown(f"""<div class="metric-card">
                 <div class="metric-number">{total_trips:,}</div>
@@ -271,8 +290,12 @@ if uploaded_files:
             st.markdown(f"""<div class="metric-card">
                 <div class="metric-number">{unique_months}</div>
                 <div class="metric-label">Months Covered</div></div>""", unsafe_allow_html=True)
+        with k5:
+            st.markdown(f"""<div class="metric-card">
+                <div class="metric-number">{total_qty:,.0f}</div>
+                <div class="metric-label">Total Quantity</div></div>""", unsafe_allow_html=True)
     else:
-        k1, k2, k3, k4, k5 = st.columns(5)
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
         with k1:
             st.markdown(f"""<div class="metric-card">
                 <div class="metric-number">{total_trips:,}</div>
@@ -293,10 +316,14 @@ if uploaded_files:
             st.markdown(f"""<div class="metric-card">
                 <div class="metric-number">{unique_plants}</div>
                 <div class="metric-label">Plants/Sources</div></div>""", unsafe_allow_html=True)
+        with k6:
+            st.markdown(f"""<div class="metric-card">
+                <div class="metric-number">{total_qty:,.0f}</div>
+                <div class="metric-label">Total Quantity</div></div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Destination Summary Table with Clickable Rows ─────────────────────────
+    # ── Destination Summary Table with Clickable Rows and Total Qty ───────────
     if selected_client.startswith("EMPTY TRIP"):
         st.subheader(f"📍 Empty Trip Destinations (No Client Association)")
         st.caption("💡 **Click on any destination row** to see detailed trip information")
@@ -310,9 +337,10 @@ if uploaded_files:
     if filtered.empty:
         st.info("No trips found for the selected filters.")
     else:
-        # Build destination summary
+        # Build destination summary with quantity
         agg_dict = {
             "Total_Trips": ("Trip No", "count"),
+            "Total_Qty": ("Inv Qty", "sum"),
             "Plants": ("Plant", lambda x: x.nunique())
         }
         
@@ -320,29 +348,60 @@ if uploaded_files:
             if len(filtered["Trip Type"].unique()) > 1:
                 agg_dict["Loaded_Trips"] = ("Trip Type", lambda x: (x == "Loaded").sum())
                 agg_dict["Empty_Trips"] = ("Trip Type", lambda x: (x == "Empty").sum())
+                agg_dict["Loaded_Qty"] = ("Inv Qty", lambda x: x[filtered["Trip Type"] == "Loaded"].sum() if len(filtered[filtered["Trip Type"] == "Loaded"]) > 0 else 0)
+                agg_dict["Empty_Qty"] = ("Inv Qty", lambda x: x[filtered["Trip Type"] == "Empty"].sum() if len(filtered[filtered["Trip Type"] == "Empty"]) > 0 else 0)
         
         dest_summary = (
             filtered.groupby("Destination")
             .agg(**agg_dict)
             .reset_index()
             .sort_values("Total_Trips", ascending=False)
-            .rename(columns={"Destination": "Destination", "Total_Trips": "Total Trips", "Plants": "Plants Used"})
+            .rename(columns={
+                "Destination": "Destination", 
+                "Total_Trips": "Total Trips", 
+                "Total_Qty": "Total Quantity",
+                "Plants": "Plants Used"
+            })
         )
         
         if "Loaded_Trips" in dest_summary.columns:
-            dest_summary = dest_summary.rename(columns={"Loaded_Trips": "Loaded Trips", "Empty_Trips": "Empty Trips"})
+            dest_summary = dest_summary.rename(columns={
+                "Loaded_Trips": "Loaded Trips", 
+                "Empty_Trips": "Empty Trips",
+                "Loaded_Qty": "Loaded Quantity",
+                "Empty_Qty": "Empty Quantity"
+            })
 
-        # Create interactive chart with plotly
-        fig = px.bar(
-            dest_summary.head(20), 
-            x="Destination", 
-            y="Total Trips",
-            title="Top 20 Destinations by Trip Count",
-            color="Total Trips",
-            color_continuous_scale="Blues",
-            text="Total Trips"
+        # Create interactive chart with plotly (show quantity or trips)
+        chart_type = st.radio(
+            "📊 Display Chart Type",
+            ["Total Trips", "Total Quantity"],
+            horizontal=True
         )
-        fig.update_traces(textposition='outside', hovertemplate='<b>%{x}</b><br>Trips: %{y}<extra></extra>')
+        
+        if chart_type == "Total Trips":
+            fig = px.bar(
+                dest_summary.head(20), 
+                x="Destination", 
+                y="Total Trips",
+                title="Top 20 Destinations by Trip Count",
+                color="Total Trips",
+                color_continuous_scale="Blues",
+                text="Total Trips"
+            )
+        else:
+            fig = px.bar(
+                dest_summary.head(20), 
+                x="Destination", 
+                y="Total Quantity",
+                title="Top 20 Destinations by Total Quantity",
+                color="Total Quantity",
+                color_continuous_scale="Greens",
+                text="Total Quantity"
+            )
+            fig.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
+        
+        fig.update_traces(textposition='outside', hovertemplate='<b>%{x}</b><br>%{y:,.0f}<extra></extra>')
         fig.update_layout(
             xaxis_tickangle=-45,
             height=500,
@@ -359,23 +418,112 @@ if uploaded_files:
             st.markdown("#### 📋 Destinations Summary")
             st.info("💡 **Click the 🔍 button next to any destination** to see detailed trip information!")
             
-            # Display table with clickable buttons
+            # Display table with clickable buttons including quantity
             for idx, row in dest_summary.iterrows():
                 destination = row['Destination']
-                col1, col2, col3, col4 = st.columns([0.5, 0.2, 0.2, 0.1])
+                col1, col2, col3, col4, col5 = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
                 with col1:
                     st.write(f"**{destination}**")
                 with col2:
                     st.write(f"{row['Total Trips']} trips")
                 with col3:
+                    st.write(f"📦 {row['Total Quantity']:,.0f}")
+                with col4:
                     if "Loaded Trips" in row:
                         st.write(f"🟢 {row['Loaded Trips']} / 🔴 {row['Empty Trips']}")
-                with col4:
+                with col5:
                     # Create a button for each destination
                     if st.button("🔍", key=f"drill_{destination}_{idx}", help=f"View details for {destination}"):
                         # Get trips for this destination
                         destination_trips = filtered[filtered["Destination"] == destination].copy()
                         show_trip_details(destination, destination_trips)
+        
+        # Also make the dataframe rows clickable using session state
+        st.markdown("---")
+        st.markdown("#### 📊 Alternative View - Click any row below")
+        
+        # Prepare column config for dataframe
+        column_config = {
+            "Destination": st.column_config.TextColumn("Destination", width="medium"),
+            "Total Trips": st.column_config.NumberColumn("Total Trips", width="small"),
+            "Total Quantity": st.column_config.NumberColumn("Total Qty", width="small", format="%.0f"),
+            "Plants Used": st.column_config.NumberColumn("Plants Used", width="small"),
+        }
+        
+        if "Loaded Trips" in dest_summary.columns:
+            column_config["Loaded Trips"] = st.column_config.NumberColumn("Loaded", width="small")
+            column_config["Empty Trips"] = st.column_config.NumberColumn("Empty", width="small")
+            column_config["Loaded Quantity"] = st.column_config.NumberColumn("Loaded Qty", width="small", format="%.0f")
+            column_config["Empty Quantity"] = st.column_config.NumberColumn("Empty Qty", width="small", format="%.0f")
+        
+        event = st.dataframe(
+            dest_summary,
+            use_container_width=True,
+            height=400,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            column_config=column_config
+        )
+        
+        # Handle row selection
+        if hasattr(event, 'selection') and event.selection and hasattr(event.selection, 'rows') and event.selection.rows:
+            selected_row_idx = event.selection.rows[0]
+            selected_destination = dest_summary.iloc[selected_row_idx]['Destination']
+            destination_trips = filtered[filtered["Destination"] == selected_destination].copy()
+            
+            # Show modal for selected row
+            show_trip_details(selected_destination, destination_trips)
+
+        # ── Plant Summary with Total Quantity ──────────────────────────────────
+        if selected_plant == "All Plants" and unique_plants > 1:
+            st.divider()
+            st.subheader("🏭 Trip Distribution by Plant with Quantity")
+            
+            plant_summary = (
+                filtered.groupby("Plant")
+                .agg(
+                    Total_Trips=("Trip No", "count"),
+                    Total_Qty=("Inv Qty", "sum"),
+                    Loaded_Trips=("Trip Type", lambda x: (x == "Loaded").sum()),
+                    Empty_Trips=("Trip Type", lambda x: (x == "Empty").sum()),
+                    Unique_Destinations=("Destination", "nunique")
+                )
+                .reset_index()
+                .sort_values("Total_Trips", ascending=False)
+            )
+            
+            col_pie, col_plant_table = st.columns([1, 1])
+            with col_pie:
+                # Show quantity by plant
+                qty_fig = px.bar(
+                    plant_summary,
+                    x="Plant",
+                    y="Total_Qty",
+                    title="Total Quantity by Plant",
+                    color="Total_Qty",
+                    color_continuous_scale="Greens",
+                    text="Total_Qty"
+                )
+                qty_fig.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
+                qty_fig.update_layout(xaxis_tickangle=-45, height=350)
+                st.plotly_chart(qty_fig, use_container_width=True)
+            
+            with col_plant_table:
+                st.dataframe(
+                    plant_summary,
+                    use_container_width=True,
+                    height=350,
+                    hide_index=True,
+                    column_config={
+                        "Plant": "Source Plant",
+                        "Total_Trips": "Total Trips",
+                        "Total_Qty": st.column_config.NumberColumn("Total Quantity", format="%.0f"),
+                        "Loaded_Trips": "Loaded",
+                        "Empty_Trips": "Empty",
+                        "Unique_Destinations": "Destinations"
+                    }
+                )
 
         # ── Empty Trip Analysis (when viewing empty trips) ─────────────────────
         if selected_client.startswith("EMPTY TRIP"):
@@ -384,9 +532,12 @@ if uploaded_files:
             
             empty_movement = (
                 filtered.groupby(["Plant", "Destination"])
-                .size()
-                .reset_index(name="Number of Empty Trips")
-                .sort_values("Number of Empty Trips", ascending=False)
+                .agg(
+                    Number_of_Empty_Trips=("Trip No", "count"),
+                    Total_Quantity=("Inv Qty", "sum")
+                )
+                .reset_index()
+                .sort_values("Number_of_Empty_Trips", ascending=False)
                 .head(20)
             )
             
@@ -400,7 +551,8 @@ if uploaded_files:
                 column_config={
                     "Plant": "Source Plant",
                     "Destination": "Destination",
-                    "Number of Empty Trips": "Trip Count"
+                    "Number_of_Empty_Trips": "Trip Count",
+                    "Total_Quantity": st.column_config.NumberColumn("Total Quantity", format="%.0f")
                 }
             )
             
@@ -419,6 +571,12 @@ if uploaded_files:
         with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
             dest_summary.to_excel(writer, sheet_name="Destination Summary", index=False)
             filtered.to_excel(writer, sheet_name="Raw Trips", index=False)
+            
+            if selected_plant == "All Plants" and unique_plants > 1:
+                plant_summary.to_excel(writer, sheet_name="Plant Summary", index=False)
+            
+            if selected_client.startswith("EMPTY TRIP"):
+                empty_movement.to_excel(writer, sheet_name="Empty Trip Movement", index=False)
             
         export_buf.seek(0)
 
@@ -440,9 +598,11 @@ else:
         <h3 style="color:#555;">No file uploaded yet</h3>
         <p>Upload your monthly trip report(s) above to get started.</p>
         <p style="font-size:0.85rem; margin-top:10px;"><strong>Required columns:</strong> <code>Client</code>, <code>Destination</code>, <code>Start Date</code>, <code>Trip No</code>, <code>Trip Type</code><br>
+        <strong>Optional columns:</strong> <code>Inv Qty</code> - for quantity analysis<br>
         <strong>Features:</strong><br>
+        • 📦 <strong>Total Quantity Column</strong> - Shows sum of "Inv Qty" per destination/plant<br>
         • 🔍 <strong>Drill-down modal</strong> - Click on any destination to see detailed trip information<br>
-        • 📊 <strong>Interactive charts</strong> - Click on bars to explore data<br>
+        • 📊 <strong>Interactive charts</strong> - Toggle between Trip Count and Quantity views<br>
         • 🎯 <strong>Clickable tables</strong> - Select rows to view detailed trip lists<br>
         <strong>Optional:</strong> <code>Source</code>, <code>Source Place</code>, or <code>Plant</code> for plant-level filtering</p>
     </div>
