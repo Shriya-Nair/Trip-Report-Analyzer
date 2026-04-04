@@ -71,7 +71,7 @@ def show_trip_details(destination, trips_df):
             st.metric("Plants Used", plants)
     with col4:
         if total_qty > 0:
-            st.metric("Total Quantity", f"{total_qty:,.2f}")  # Changed to 2 decimal places
+            st.metric("Total Quantity", f"{total_qty:,.2f}")
     
     st.divider()
     
@@ -93,7 +93,7 @@ def show_trip_details(destination, trips_df):
             "Trip Type": st.column_config.TextColumn("Type"),
             "Client": st.column_config.TextColumn("Client"),
             "Plant": st.column_config.TextColumn("Source Plant"),
-            "Inv Qty": st.column_config.NumberColumn("Quantity", format="%.2f"),  # Changed to 2 decimal places
+            "Inv Qty": st.column_config.NumberColumn("Quantity", format="%.2f"),
             "Source File": st.column_config.TextColumn("Report Source")
         }
     )
@@ -206,7 +206,7 @@ if uploaded_files:
         st.metric("Empty Trips", f"{empty_trips_all:,}",
                   delta=f"{(empty_trips_all/total_trips_all*100):.1f}%" if total_trips_all > 0 else "0%")
     with col4:
-        st.metric("Total Quantity", f"{total_qty_all:,.2f}")  # Changed to 2 decimal places
+        st.metric("Total Quantity", f"{total_qty_all:,.2f}")
     
     st.success(f"✅ Loaded **{len(df):,}** trip records from **{len(files_data)}** file(s).")
     st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
@@ -229,9 +229,20 @@ if uploaded_files:
     with col2:
         # Get plants for selected client
         client_plants = df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist()
-        client_plants = sorted(client_plants) if client_plants else ["All Plants"]
-        plant_options = ["All Plants"] + client_plants
-        selected_plant = st.selectbox("🏭 Select Plant/Source", plant_options)
+        client_plants = sorted(client_plants) if client_plants else []
+        
+        # Multi-select for plants
+        selected_plants = st.multiselect(
+            "🏭 Select Plant/Source (Multiple allowed)",
+            options=client_plants,
+            default=client_plants,  # Select all plants by default
+            help="You can select multiple plants to analyze together"
+        )
+        
+        # If no plants selected, show warning
+        if not selected_plants:
+            st.warning("⚠️ Please select at least one plant")
+            st.stop()
     
     # Second row of filters
     col3, col4, col5 = st.columns(3)
@@ -255,8 +266,8 @@ if uploaded_files:
     # ── Filter data ──────────────────────────────────────────────────────────
     filtered = df[df["Client"] == selected_client].copy()
     
-    if selected_plant != "All Plants":
-        filtered = filtered[filtered["Plant"] == selected_plant]
+    # Filter by selected plants (multiple)
+    filtered = filtered[filtered["Plant"].isin(selected_plants)]
     
     if selected_month != "All Months":
         filtered = filtered[filtered["Month"] == selected_month]
@@ -272,6 +283,9 @@ if uploaded_files:
     unique_plants = filtered["Plant"].nunique()
     unique_months = filtered["Month"].nunique()
     total_qty = filtered["Inv Qty"].sum() if "Inv Qty" in filtered.columns else 0
+
+    # Show selected plants info
+    st.caption(f"📌 **Selected Plants ({len(selected_plants)}):** {', '.join(selected_plants[:5])}{'...' if len(selected_plants) > 5 else ''}")
 
     # Show different KPIs based on whether this is empty trips or regular client
     if selected_client.startswith("EMPTY TRIP"):
@@ -332,9 +346,6 @@ if uploaded_files:
     else:
         st.subheader(f"📍 Trips to Each Destination — {selected_client}")
         st.caption("💡 **Click on any destination row** to see detailed trip information")
-    
-    if selected_plant != "All Plants":
-        st.caption(f"🏭 Filtered by Plant: **{selected_plant}**")
 
     if filtered.empty:
         st.info("No trips found for the selected filters.")
@@ -402,7 +413,7 @@ if uploaded_files:
                 color_continuous_scale="Greens",
                 text="Total Quantity"
             )
-            fig.update_traces(texttemplate='%{text:,.2f}', textposition='outside')  # 2 decimal places
+            fig.update_traces(texttemplate='%{text:,.2f}', textposition='outside')
         
         fig.update_traces(hovertemplate='<b>%{x}</b><br>%{y:,.2f}<extra></extra>')
         fig.update_layout(
@@ -430,7 +441,7 @@ if uploaded_files:
                 with col2:
                     st.write(f"{row['Total Trips']} trips")
                 with col3:
-                    st.write(f"📦 {row['Total Quantity']:,.2f}")  # 2 decimal places
+                    st.write(f"📦 {row['Total Quantity']:,.2f}")
                 with col4:
                     if "Loaded Trips" in row:
                         st.write(f"🟢 {row['Loaded Trips']} / 🔴 {row['Empty Trips']}")
@@ -440,46 +451,9 @@ if uploaded_files:
                         # Get trips for this destination
                         destination_trips = filtered[filtered["Destination"] == destination].copy()
                         show_trip_details(destination, destination_trips)
-        
-        # Also make the dataframe rows clickable using session state
-        st.markdown("---")
-        st.markdown("#### 📊 Alternative View - Click any row below")
-        
-        # Prepare column config for dataframe with decimal formatting
-        column_config = {
-            "Destination": st.column_config.TextColumn("Destination", width="medium"),
-            "Total Trips": st.column_config.NumberColumn("Total Trips", width="small"),
-            "Total Quantity": st.column_config.NumberColumn("Total Qty", width="small", format="%.2f"),  # 2 decimal places
-            "Plants Used": st.column_config.NumberColumn("Plants Used", width="small"),
-        }
-        
-        if "Loaded Trips" in dest_summary.columns:
-            column_config["Loaded Trips"] = st.column_config.NumberColumn("Loaded", width="small")
-            column_config["Empty Trips"] = st.column_config.NumberColumn("Empty", width="small")
-            column_config["Loaded Quantity"] = st.column_config.NumberColumn("Loaded Qty", width="small", format="%.2f")  # 2 decimal places
-            column_config["Empty Quantity"] = st.column_config.NumberColumn("Empty Qty", width="small", format="%.2f")  # 2 decimal places
-        
-        event = st.dataframe(
-            dest_summary,
-            use_container_width=True,
-            height=400,
-            hide_index=True,
-            selection_mode="single-row",
-            on_select="rerun",
-            column_config=column_config
-        )
-        
-        # Handle row selection
-        if hasattr(event, 'selection') and event.selection and hasattr(event.selection, 'rows') and event.selection.rows:
-            selected_row_idx = event.selection.rows[0]
-            selected_destination = dest_summary.iloc[selected_row_idx]['Destination']
-            destination_trips = filtered[filtered["Destination"] == selected_destination].copy()
-            
-            # Show modal for selected row
-            show_trip_details(selected_destination, destination_trips)
 
         # ── Plant Summary with Total Quantity (preserving decimals) ────────────
-        if selected_plant == "All Plants" and unique_plants > 1:
+        if len(selected_plants) > 1 and unique_plants > 1:
             st.divider()
             st.subheader("🏭 Trip Distribution by Plant with Quantity")
             
@@ -508,7 +482,7 @@ if uploaded_files:
                     color_continuous_scale="Greens",
                     text="Total_Qty"
                 )
-                qty_fig.update_traces(texttemplate='%{text:,.2f}', textposition='outside')  # 2 decimal places
+                qty_fig.update_traces(texttemplate='%{text:,.2f}', textposition='outside')
                 qty_fig.update_layout(xaxis_tickangle=-45, height=350)
                 st.plotly_chart(qty_fig, use_container_width=True)
             
@@ -521,7 +495,7 @@ if uploaded_files:
                     column_config={
                         "Plant": "Source Plant",
                         "Total_Trips": "Total Trips",
-                        "Total_Qty": st.column_config.NumberColumn("Total Quantity", format="%.2f"),  # 2 decimal places
+                        "Total_Qty": st.column_config.NumberColumn("Total Quantity", format="%.2f"),
                         "Loaded_Trips": "Loaded",
                         "Empty_Trips": "Empty",
                         "Unique_Destinations": "Destinations"
@@ -545,28 +519,17 @@ if uploaded_files:
             )
             
             st.markdown("**Click on any row in the table below to see details**")
-            movement_event = st.dataframe(
+            movement_df = st.dataframe(
                 empty_movement,
                 use_container_width=True,
                 hide_index=True,
-                selection_mode="single-row",
-                on_select="rerun",
                 column_config={
                     "Plant": "Source Plant",
                     "Destination": "Destination",
                     "Number_of_Empty_Trips": "Trip Count",
-                    "Total_Quantity": st.column_config.NumberColumn("Total Quantity", format="%.2f")  # 2 decimal places
+                    "Total_Quantity": st.column_config.NumberColumn("Total Quantity", format="%.2f")
                 }
             )
-            
-            if hasattr(movement_event, 'selection') and movement_event.selection and hasattr(movement_event.selection, 'rows') and movement_event.selection.rows:
-                selected_row_idx = movement_event.selection.rows[0]
-                selected_route = empty_movement.iloc[selected_row_idx]
-                route_trips = filtered[
-                    (filtered["Plant"] == selected_route["Plant"]) & 
-                    (filtered["Destination"] == selected_route["Destination"])
-                ].copy()
-                show_trip_details(f"{selected_route['Plant']} → {selected_route['Destination']}", route_trips)
 
         # ── Download button ───────────────────────────────────────────────────
         st.divider()
@@ -575,7 +538,7 @@ if uploaded_files:
             dest_summary.to_excel(writer, sheet_name="Destination Summary", index=False)
             filtered.to_excel(writer, sheet_name="Raw Trips", index=False)
             
-            if selected_plant == "All Plants" and unique_plants > 1:
+            if len(selected_plants) > 1 and unique_plants > 1:
                 plant_summary.to_excel(writer, sheet_name="Plant Summary", index=False)
             
             if selected_client.startswith("EMPTY TRIP"):
@@ -583,13 +546,13 @@ if uploaded_files:
             
         export_buf.seek(0)
 
-        plant_label = selected_plant.replace(" ", "_") if selected_plant != "All Plants" else "All_Plants"
+        plants_label = f"{len(selected_plants)}_plants" if len(selected_plants) > 1 else selected_plants[0].replace(" ", "_")
         month_label = selected_month.replace(" ", "_") if selected_month != "All Months" else "All_Months"
         client_label = selected_client.replace(" ", "_").replace("-", "_")[:50]
         st.download_button(
             label="⬇️ Download Summary as Excel",
             data=export_buf,
-            file_name=f"{client_label}_{plant_label}_{month_label}_trip_summary.xlsx",
+            file_name=f"{client_label}_{plants_label}_{month_label}_trip_summary.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
@@ -603,10 +566,10 @@ else:
         <p style="font-size:0.85rem; margin-top:10px;"><strong>Required columns:</strong> <code>Client</code>, <code>Destination</code>, <code>Start Date</code>, <code>Trip No</code>, <code>Trip Type</code><br>
         <strong>Optional columns:</strong> <code>Inv Qty</code> - for quantity analysis (supports decimals)<br>
         <strong>Features:</strong><br>
+        • 🏭 <strong>Multi-Plant Selection</strong> - Select multiple plants to analyze together<br>
         • 📦 <strong>Decimal Precision</strong> - Shows exact quantities with 2 decimal places<br>
         • 🔍 <strong>Drill-down modal</strong> - Click on any destination to see detailed trip information<br>
         • 📊 <strong>Interactive charts</strong> - Toggle between Trip Count and Quantity views<br>
-        • 🎯 <strong>Clickable tables</strong> - Select rows to view detailed trip lists<br>
         <strong>Optional:</strong> <code>Source</code>, <code>Source Place</code>, or <code>Plant</code> for plant-level filtering</p>
     </div>
     """, unsafe_allow_html=True)
