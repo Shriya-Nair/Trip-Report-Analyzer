@@ -156,43 +156,50 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     audit_records = []
     merged_rows = []
+    merged_qtys = []   # track correct qty separately to avoid Series→DataFrame dtype loss
 
     for trip_no, group in dup_df.groupby("Trip No"):
         destinations = group["Destination"].dropna().unique().tolist()
 
         if len(destinations) == 1:
+            summed_qty = float(group["Inv Qty"].sum())
             representative = group.iloc[0].copy()
-            representative["Inv Qty"] = group["Inv Qty"].sum()
             representative["_dedup_note"] = f"Merged {len(group)} rows (same destination, summed qty)"
             merged_rows.append(representative)
+            merged_qtys.append(summed_qty)
             audit_records.append({
                 "Trip No": trip_no,
                 "Action": "MERGED – same destination",
                 "Destinations Found": "; ".join(destinations),
                 "Canonical Destination": destinations[0],
                 "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
-                "Final Qty": group["Inv Qty"].sum(),
+                "Final Qty": summed_qty,
                 "Rows Affected": len(group),
             })
         else:
             best_idx = group["Inv Qty"].idxmax()
+            best_qty = float(group.loc[best_idx, "Inv Qty"])
             representative = group.loc[best_idx].copy()
             representative["_dedup_note"] = (
                 f"Kept highest-qty leg ({representative['Destination']}) "
                 f"from {len(group)} rows with different destinations"
             )
             merged_rows.append(representative)
+            merged_qtys.append(best_qty)
             audit_records.append({
                 "Trip No": trip_no,
                 "Action": "KEPT BEST LEG – different destinations",
                 "Destinations Found": "; ".join(destinations),
                 "Canonical Destination": representative["Destination"],
                 "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
-                "Final Qty": representative["Inv Qty"],
+                "Final Qty": best_qty,
                 "Rows Affected": len(group),
             })
 
     merged_df = pd.DataFrame(merged_rows)
+    # Overwrite Inv Qty with the correctly computed values AFTER DataFrame construction
+    # (avoids silent dtype coercion to 0 that happens when building from Series objects)
+    merged_df["Inv Qty"] = [float(q) for q in merged_qtys]
     unique_df["_dedup_note"] = ""
     final_df = pd.concat([unique_df, merged_df], ignore_index=True)
     audit_df = pd.DataFrame(audit_records) if audit_records else pd.DataFrame()
@@ -357,15 +364,23 @@ if uploaded_files:
     with col1:
         selected_client = st.selectbox("🏢 Select Client", client_options)
     with col2:
-        client_plants   = sorted(df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist())
-        selected_plants = st.multiselect(
-            "🏭 Select Plant/Source (Multiple allowed)",
-            options=client_plants,
-            default=client_plants,
-            help="You can select multiple plants to analyze together",
+        client_plants = sorted(df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist())
+        ALL_PLANTS_LABEL = "All Plants"
+        plant_options = [ALL_PLANTS_LABEL] + client_plants
+        selected_plant_input = st.multiselect(
+            "🏭 Select Plant/Source",
+            options=plant_options,
+            default=[],
+            placeholder="Leave blank or pick 'All Plants' to include all…",
+            help="Select specific plants, or leave empty / choose 'All Plants' to include everything.",
         )
+        # Nothing chosen OR explicit "All Plants" selected → use every plant
+        if not selected_plant_input or ALL_PLANTS_LABEL in selected_plant_input:
+            selected_plants = client_plants
+        else:
+            selected_plants = selected_plant_input
         if not selected_plants:
-            st.warning("⚠️ Please select at least one plant")
+            st.warning("⚠️ No plants found for this client.")
             st.stop()
 
     col3, col4, col5 = st.columns(3)
