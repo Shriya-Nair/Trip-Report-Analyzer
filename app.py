@@ -65,7 +65,7 @@ def show_trip_details(destination, trips_df):
     st.divider()
     st.subheader("📊 Detailed Trip List")
 
-    display_cols = ["Trip No", "Start Date", "Trip Type", "Client", "Plant", "Inv Qty", "Source File", "_dedup_note"]
+    display_cols = ["Trip No", "Start Date", "Trip Type", "Client", "Plant", "Inv Qty", "Source File"]
     available_cols = [col for col in display_cols if col in trips_df.columns]
 
     st.dataframe(
@@ -81,7 +81,6 @@ def show_trip_details(destination, trips_df):
             "Plant": st.column_config.TextColumn("Source Plant"),
             "Inv Qty": st.column_config.NumberColumn("Quantity", format="%.2f"),
             "Source File": st.column_config.TextColumn("Report Source"),
-            "_dedup_note": st.column_config.TextColumn("Dedup Note"),
         },
     )
 
@@ -150,10 +149,6 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     unique_df = df[~duplicated_mask].copy()
     dup_df = df[duplicated_mask].copy()
 
-    if dup_df.empty:
-        unique_df["_dedup_note"] = ""
-        return unique_df, pd.DataFrame()
-
     audit_records = []
     merged_rows = []
     merged_qtys = []   # track correct qty separately to avoid Series→DataFrame dtype loss
@@ -164,7 +159,6 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         if len(destinations) == 1:
             summed_qty = float(group["Inv Qty"].sum())
             representative = group.iloc[0].copy()
-            representative["_dedup_note"] = f"Merged {len(group)} rows (same destination, summed qty)"
             merged_rows.append(representative)
             merged_qtys.append(summed_qty)
             audit_records.append({
@@ -180,10 +174,6 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             best_idx = group["Inv Qty"].idxmax()
             best_qty = float(group.loc[best_idx, "Inv Qty"])
             representative = group.loc[best_idx].copy()
-            representative["_dedup_note"] = (
-                f"Kept highest-qty leg ({representative['Destination']}) "
-                f"from {len(group)} rows with different destinations"
-            )
             merged_rows.append(representative)
             merged_qtys.append(best_qty)
             audit_records.append({
@@ -200,7 +190,6 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     # Overwrite Inv Qty with the correctly computed values AFTER DataFrame construction
     # (avoids silent dtype coercion to 0 that happens when building from Series objects)
     merged_df["Inv Qty"] = [float(q) for q in merged_qtys]
-    unique_df["_dedup_note"] = ""
     final_df = pd.concat([unique_df, merged_df], ignore_index=True)
     audit_df = pd.DataFrame(audit_records) if audit_records else pd.DataFrame()
     return final_df, audit_df
@@ -371,7 +360,7 @@ if uploaded_files:
             "🏭 Select Plant/Source",
             options=plant_options,
             default=[],
-            placeholder="Leave blank or pick 'All Plants' to include all…",
+            placeholder="Pick 'All Plants' to include all…",
             help="Select specific plants, or leave empty / choose 'All Plants' to include everything.",
         )
         # Nothing chosen OR explicit "All Plants" selected → use every plant
