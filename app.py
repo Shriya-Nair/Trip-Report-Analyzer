@@ -75,6 +75,13 @@ st.markdown("""
         color: #d32f2f;
         font-size: 1.1rem;
     }
+    .filter-section {
+        background: white;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        margin-bottom: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -186,7 +193,7 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     audit_records = []
     merged_rows = []
-    merged_qtys = []   # track correct qty separately to avoid Series→DataFrame dtype loss
+    merged_qtys = []
 
     for trip_no, group in dup_df.groupby("Trip No"):
         destinations = group["Destination"].dropna().unique().tolist()
@@ -222,8 +229,6 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             })
 
     merged_df = pd.DataFrame(merged_rows)
-    # Overwrite Inv Qty with the correctly computed values AFTER DataFrame construction
-    # (avoids silent dtype coercion to 0 that happens when building from Series objects)
     merged_df["Inv Qty"] = [float(q) for q in merged_qtys]
     final_df = pd.concat([unique_df, merged_df], ignore_index=True)
     audit_df = pd.DataFrame(audit_records) if audit_records else pd.DataFrame()
@@ -231,13 +236,8 @@ def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 # ── Cached loader — ZERO st.* calls inside ───────────────────────────────────
-# All messages are returned as a list and rendered by the caller.
 @st.cache_data
 def load_files(files_data: list[tuple]) -> dict:
-    """
-    Returns dict: {df, audit_df, messages}
-    messages = list of (level, text) where level in {"info","warning","error","dedup"}
-    """
     messages: list[tuple[str, str]] = []
     frames = []
 
@@ -315,48 +315,78 @@ def minutes_to_hhmm(minutes: float) -> str:
     return f"{hours:02d}:{mins:02d}"
 
 
-def process_tat_data(df_tat: pd.DataFrame, trip_nos: list = None) -> tuple:
-    """
-    Process TAT data and return averages for each stage.
-    Returns: (avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records)
-    """
-    if df_tat.empty:
-        return 0, 0, 0, 0, 0, 0
-    
-    # Filter by Trip Nos if provided
-    if trip_nos is not None and len(trip_nos) > 0:
-        if "Trip No" in df_tat.columns:
-            df_tat = df_tat[df_tat["Trip No"].isin(trip_nos)].copy()
-    
-    if df_tat.empty:
-        return 0, 0, 0, 0, 0, 0
-    
-    total_records = len(df_tat)
-    
-    # Map columns for TAT stages
+def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
+    """Identify relevant columns in TAT dataframe."""
     col_mapping = {
+        "client_col": ["Client", "Customer", "Client Name", "Customer Name"],
+        "plant_col": ["Plant", "Source Plant", "Source", "Plant Name", "Origin"],
+        "trip_no_col": ["Trip No", "Trip Number", "TripNo", "Trip ID"],
         "stage1": ["Actual DO Receipt (Mins)", "DO Receipt (Mins)", "Actual DO Receipt"],
         "stage2": ["Actual Gate In(Mins)", "Gate In (Mins)", "Actual Gate In"],
         "stage3": ["Actual Loaded Exit(Mins)", "Loaded Exit (Mins)", "Actual Loaded Exit"],
         "stage4": ["Actual Gate In for Unloading(Mins)", "Gate In for Unloading (Mins)", "Actual Gate In for Unloading"],
         "stage5": ["Actual Unloaded (Mins)", "Unloaded (Mins)", "Actual Unloaded"],
+        "date_col": ["Date", "Start Date", "Trip Date", "Transaction Date"],
+        "destination_col": ["Destination", "To", "Delivery Location", "Unloading Point"],
     }
     
-    actual_columns = {}
-    for stage, possible_names in col_mapping.items():
+    identified = {}
+    for key, possible_names in col_mapping.items():
         found_col = None
         for name in possible_names:
             if name in df_tat.columns:
                 found_col = name
                 break
-        actual_columns[stage] = found_col
+        identified[key] = found_col
+    
+    return identified
+
+
+def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
+    """
+    Process TAT data and return averages for each stage.
+    filters: dict with keys 'client', 'plant', 'trip_nos', 'date_range'
+    Returns: (avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_df)
+    """
+    if df_tat.empty:
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+    
+    df_filtered = df_tat.copy()
+    columns = identify_tat_columns(df_tat)
+    
+    # Apply filters if provided
+    if filters:
+        # Filter by trip numbers
+        if filters.get('trip_nos') and columns['trip_no_col']:
+            df_filtered = df_filtered[df_filtered[columns['trip_no_col']].isin(filters['trip_nos'])]
+        
+        # Filter by client
+        if filters.get('client') and filters['client'] != "All Clients" and columns['client_col']:
+            df_filtered = df_filtered[df_filtered[columns['client_col']] == filters['client']]
+        
+        # Filter by plant
+        if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
+            df_filtered = df_filtered[df_filtered[columns['plant_col']] == filters['plant']]
+        
+        # Filter by date range
+        if filters.get('date_range') and columns['date_col']:
+            start_date, end_date = filters['date_range']
+            if start_date and end_date:
+                date_series = pd.to_datetime(df_filtered[columns['date_col']], errors='coerce')
+                df_filtered = df_filtered[(date_series >= pd.Timestamp(start_date)) & 
+                                         (date_series <= pd.Timestamp(end_date))]
+    
+    if df_filtered.empty:
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+    
+    total_records = len(df_filtered)
     
     # Calculate averages for each stage
     averages = {}
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = actual_columns[stage]
-        if col and col in df_tat.columns:
-            avg_val = pd.to_numeric(df_tat[col], errors='coerce').mean()
+        col = columns[stage]
+        if col and col in df_filtered.columns:
+            avg_val = pd.to_numeric(df_filtered[col], errors='coerce').mean()
             averages[stage] = avg_val if not pd.isna(avg_val) else 0
         else:
             averages[stage] = 0
@@ -367,18 +397,128 @@ def process_tat_data(df_tat: pd.DataFrame, trip_nos: list = None) -> tuple:
         averages["stage3"],
         averages["stage4"],
         averages["stage5"],
-        total_records
+        total_records,
+        df_filtered
     )
 
 
+def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
+    """Extract filter options from TAT dataframe."""
+    columns = identify_tat_columns(df_tat)
+    options = {}
+    
+    # Clients
+    if columns['client_col']:
+        clients = sorted(df_tat[columns['client_col']].dropna().unique().tolist())
+        options['clients'] = ["All Clients"] + clients
+    else:
+        options['clients'] = ["All Clients"]
+    
+    # Plants
+    if columns['plant_col']:
+        plants = sorted(df_tat[columns['plant_col']].dropna().unique().tolist())
+        options['plants'] = ["All Plants"] + plants
+    else:
+        options['plants'] = ["All Plants"]
+    
+    # Date range
+    if columns['date_col']:
+        date_series = pd.to_datetime(df_tat[columns['date_col']], errors='coerce')
+        options['min_date'] = date_series.min().date() if not pd.isna(date_series.min()) else None
+        options['max_date'] = date_series.max().date() if not pd.isna(date_series.max()) else None
+    else:
+        options['min_date'] = None
+        options['max_date'] = None
+    
+    return options, columns
+
+
 # ── TAT Report Rendering ─────────────────────────────────────────────────────
-def render_tat_report(df_tat, filtered_trip_nos=None):
+def render_tat_report(df_tat, filters=None):
     """Render the TAT Report tab content."""
-    st.subheader("📊 Turnaround Time (TAT) Analysis Report")
+    st.subheader("📊 TAT Analysis Report")
+    
+    # Get filter options
+    filter_options, tat_columns = get_tat_filter_options(df_tat)
+    
+    # ── TAT Filters ──────────────────────────────────────────────────────────
+    with st.expander("🔍 TAT Data Filters", expanded=True):
+        st.markdown('<div class="filter-section">', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Client filter
+            if len(filter_options['clients']) > 1:
+                selected_tat_client = st.selectbox(
+                    "🏢 Client",
+                    filter_options['clients'],
+                    key="tat_client_filter"
+                )
+            else:
+                selected_tat_client = "All Clients"
+                st.info("ℹ️ No Client column found in TAT data")
+            
+            # Plant filter
+            if len(filter_options['plants']) > 1:
+                selected_tat_plant = st.selectbox(
+                    "🏭 Plant/Source",
+                    filter_options['plants'],
+                    key="tat_plant_filter"
+                )
+            else:
+                selected_tat_plant = "All Plants"
+                st.info("ℹ️ No Plant column found in TAT data")
+        
+        with col2:
+            # Date range filter
+            if filter_options['min_date'] and filter_options['max_date']:
+                date_range = st.date_input(
+                    "📅 Date Range",
+                    value=(filter_options['min_date'], filter_options['max_date']),
+                    min_value=filter_options['min_date'],
+                    max_value=filter_options['max_date'],
+                    key="tat_date_filter"
+                )
+                if len(date_range) == 2:
+                    start_date, end_date = date_range
+                else:
+                    start_date, end_date = None, None
+            else:
+                start_date, end_date = None, None
+                st.info("ℹ️ No Date column found in TAT data")
+        
+        # Trip filter option
+        use_trip_filter = st.checkbox(
+            "🔗 Filter by Trip Analysis selection",
+            value=(filters is not None and filters.get('trip_nos') is not None),
+            key="tat_trip_filter_checkbox",
+            help="Filter TAT data to only include trips from the current Trip Analysis selection"
+        )
+        
+        # Clear filters button
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            if st.button("🗑️ Clear TAT Filters", key="clear_tat_filters"):
+                st.session_state.tat_client_filter = "All Clients"
+                st.session_state.tat_plant_filter = "All Plants"
+                st.session_state.tat_trip_filter_checkbox = False
+                st.rerun()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
     st.markdown("---")
     
+    # Build filter dictionary
+    tat_filters = {
+        'client': selected_tat_client if 'selected_tat_client' in locals() else "All Clients",
+        'plant': selected_tat_plant if 'selected_tat_plant' in locals() else "All Plants",
+        'date_range': (start_date, end_date) if 'start_date' in locals() else (None, None),
+        'trip_nos': filters.get('trip_nos') if use_trip_filter and filters else None
+    }
+    
     # Calculate TAT metrics
-    avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records = process_tat_data(df_tat, filtered_trip_nos)
+    avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_tat_df = process_tat_data(df_tat, tat_filters)
     
     # Calculate totals
     total_loading = avg_stage1 + avg_stage2 + avg_stage3
@@ -386,10 +526,20 @@ def render_tat_report(df_tat, filtered_trip_nos=None):
     total_tat = total_loading + total_unloading
     
     # Show filter status
-    if filtered_trip_nos is not None and len(filtered_trip_nos) > 0:
-        st.info(f"🔗 **Filter Applied:** TAT data filtered for **{len(filtered_trip_nos):,}** trip(s) matching the current Trip Analysis selection.")
+    active_filters = []
+    if tat_filters['client'] != "All Clients":
+        active_filters.append(f"Client: **{tat_filters['client']}**")
+    if tat_filters['plant'] != "All Plants":
+        active_filters.append(f"Plant: **{tat_filters['plant']}**")
+    if tat_filters['date_range'][0] and tat_filters['date_range'][1]:
+        active_filters.append(f"Date: **{tat_filters['date_range'][0]}** to **{tat_filters['date_range'][1]}**")
+    if use_trip_filter and tat_filters['trip_nos']:
+        active_filters.append(f"Trip Filter: **{len(tat_filters['trip_nos']):,}** trips")
+    
+    if active_filters:
+        st.info(f"🔍 **Active Filters:** {' | '.join(active_filters)} | **Records:** {total_records:,}")
     else:
-        st.info("📊 **No Filter Applied:** Showing TAT analysis for all records in the TAT file.")
+        st.info(f"📊 **All Records:** Showing all {total_records:,} TAT records")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -502,40 +652,115 @@ def render_tat_report(df_tat, filtered_trip_nos=None):
     
     st.markdown(table_html, unsafe_allow_html=True)
     
-    # Additional insights
-    if total_tat > 0:
+    # Additional insights and data
+    if total_tat > 0 and not filtered_tat_df.empty:
         st.markdown("---")
-        with st.expander("📊 TAT Distribution Insights", expanded=False):
-            loading_pct = (total_loading / total_tat) * 100
-            unloading_pct = (total_unloading / total_tat) * 100
-            
+        
+        # TAT Distribution
+        with st.expander("📊 TAT Distribution Insights", expanded=True):
             col1, col2 = st.columns(2)
+            
             with col1:
-                st.metric("Loading Phase %", f"{loading_pct:.1f}%")
+                loading_pct = (total_loading / total_tat) * 100
+                unloading_pct = (total_unloading / total_tat) * 100
+                
+                # Pie chart
+                pie_data = pd.DataFrame({
+                    'Phase': ['Loading (Stages 1-3)', 'Unloading (Stages 4-5)'],
+                    'Minutes': [total_loading, total_unloading]
+                })
+                fig_pie = px.pie(
+                    pie_data, 
+                    values='Minutes', 
+                    names='Phase',
+                    title=f'TAT Distribution: Loading vs Unloading',
+                    color_discrete_sequence=['#1a73e8', '#34a853']
+                )
+                fig_pie.update_traces(textinfo='percent+label')
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
             with col2:
-                st.metric("Unloading Phase %", f"{unloading_pct:.1f}%")
-            
-            # Simple bar chart for stage breakdown
-            stage_data = pd.DataFrame({
-                'Stage': ['Stage 1\nDO Receipt', 'Stage 2\nGate Entry', 'Stage 3\nLoading Exit', 'Stage 4\nUnload Wait', 'Stage 5\nUnloading'],
-                'Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5],
-                'Phase': ['Loading', 'Loading', 'Loading', 'Unloading', 'Unloading']
-            })
-            
-            fig = px.bar(
-                stage_data,
-                x='Stage',
-                y='Minutes',
-                title='Average Time per TAT Stage',
-                color='Phase',
-                color_discrete_map={'Loading': '#1a73e8', 'Unloading': '#34a853'},
-                text='Minutes'
+                # Bar chart for stage breakdown
+                stage_data = pd.DataFrame({
+                    'Stage': ['Stage 1<br>DO Receipt', 'Stage 2<br>Gate Entry', 
+                             'Stage 3<br>Loading Exit', 'Stage 4<br>Unload Wait', 
+                             'Stage 5<br>Unloading'],
+                    'Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5],
+                    'Phase': ['Loading', 'Loading', 'Loading', 'Unloading', 'Unloading']
+                })
+                
+                fig_bar = px.bar(
+                    stage_data,
+                    x='Stage',
+                    y='Minutes',
+                    title='Average Time per TAT Stage',
+                    color='Phase',
+                    color_discrete_map={'Loading': '#1a73e8', 'Unloading': '#34a853'},
+                    text='Minutes'
+                )
+                fig_bar.update_traces(texttemplate='%{text:.1f} min', textposition='outside')
+                fig_bar.update_layout(height=400, showlegend=True)
+                st.plotly_chart(fig_bar, use_container_width=True)
+        
+        # Client/Plant breakdown if those columns exist
+        tat_columns = identify_tat_columns(df_tat)
+        
+        if tat_columns['client_col'] or tat_columns['plant_col']:
+            with st.expander("📋 TAT by Client & Plant", expanded=False):
+                tab_client, tab_plant = st.tabs(["By Client", "By Plant"])
+                
+                with tab_client:
+                    if tat_columns['client_col'] and tat_columns['client_col'] in filtered_tat_df.columns:
+                        client_tat = filtered_tat_df.groupby(tat_columns['client_col']).agg(
+                            Records=('Trip No' if 'Trip No' in filtered_tat_df.columns else filtered_tat_df.columns[0], 'count'),
+                            Avg_Loading=(tat_columns['stage3'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                            Avg_Unloading=(tat_columns['stage5'], lambda x: pd.to_numeric(x, errors='coerce').mean())
+                        ).reset_index()
+                        client_tat.columns = ['Client', 'Records', 'Avg Loading (min)', 'Avg Unloading (min)']
+                        client_tat['Total TAT (min)'] = client_tat['Avg Loading (min)'] + client_tat['Avg Unloading (min)']
+                        
+                        st.dataframe(
+                            client_tat.sort_values('Records', ascending=False),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.info("Client column not available in TAT data")
+                
+                with tab_plant:
+                    if tat_columns['plant_col'] and tat_columns['plant_col'] in filtered_tat_df.columns:
+                        plant_tat = filtered_tat_df.groupby(tat_columns['plant_col']).agg(
+                            Records=('Trip No' if 'Trip No' in filtered_tat_df.columns else filtered_tat_df.columns[0], 'count'),
+                            Avg_Loading=(tat_columns['stage3'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                            Avg_Unloading=(tat_columns['stage5'], lambda x: pd.to_numeric(x, errors='coerce').mean())
+                        ).reset_index()
+                        plant_tat.columns = ['Plant', 'Records', 'Avg Loading (min)', 'Avg Unloading (min)']
+                        plant_tat['Total TAT (min)'] = plant_tat['Avg Loading (min)'] + plant_tat['Avg Unloading (min)']
+                        
+                        st.dataframe(
+                            plant_tat.sort_values('Records', ascending=False),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.info("Plant column not available in TAT data")
+        
+        # Data preview
+        with st.expander("👀 Preview Filtered TAT Data", expanded=False):
+            st.dataframe(
+                filtered_tat_df.head(50),
+                use_container_width=True,
+                height=300,
+                hide_index=True
             )
-            fig.update_traces(texttemplate='%{text:.1f} min', textposition='outside')
-            fig.update_layout(height=450, showlegend=True)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Download TAT report
+            st.caption(f"Showing first 50 of {len(filtered_tat_df):,} filtered records")
+        
+        # Download options
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Download TAT summary report
             tat_export = pd.DataFrame({
                 'Stage': ['Stage 1 - DO Receipt', 'Stage 2 - Gate Entry', 'Stage 3 - Loading Exit',
                          'Stage 4 - Unloading Wait', 'Stage 5 - Unloading',
@@ -552,9 +777,19 @@ def render_tat_report(df_tat, filtered_trip_nos=None):
             
             csv_tat = tat_export.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📥 Download TAT Report (CSV)",
+                label="📥 Download TAT Summary (CSV)",
                 data=csv_tat,
-                file_name="tat_report.csv",
+                file_name="tat_summary_report.csv",
+                mime="text/csv",
+            )
+        
+        with col2:
+            # Download filtered raw data
+            csv_filtered = filtered_tat_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Filtered TAT Data (CSV)",
+                data=csv_filtered,
+                file_name="tat_filtered_data.csv",
                 mime="text/csv",
             )
 
@@ -583,15 +818,11 @@ with col2:
         "Upload TAT Data File (.xlsx)",
         type=["xlsx"],
         accept_multiple_files=False,
-        help="Upload the Turnaround Time dataset for standalone analysis.",
+        help="Upload the TATound Time dataset for standalone analysis.",
         key="tat_uploader"
     )
 
 st.divider()
-
-# ── Initialize session state for tab selection ───────────────────────────────
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = "Trip Analysis"
 
 # ── Determine available tabs ────────────────────────────────────────────────
 has_trip_data = uploaded_files is not None and len(uploaded_files) > 0
@@ -630,19 +861,18 @@ if has_trip_data:
     df       = result["df"]
     audit_df = result["audit_df"]
 
-    # Render messages that were collected inside the cached function
+    # Render messages
     for level, text in result["messages"]:
         if level == "warning":
             st.warning(text)
         elif level == "error":
             st.error(text)
-        else:  # "info" or "dedup"
+        else:
             st.info(text)
 
-    if df.empty:
+    if df.empty and not has_tat_data:
         st.error("No valid data could be loaded. Please check your files.")
-        if not has_tat_data:
-            st.stop()
+        st.stop()
 
 # ── Load TAT Data ────────────────────────────────────────────────────────────
 df_tat = pd.DataFrame()
@@ -655,18 +885,18 @@ if has_tat_data:
 # ── TAB 1: Trip Analysis ────────────────────────────────────────────────────
 if has_trip_data and tab1 is not None:
     with (tab1 if tab2 is not None else st.container()):
-        # ── Deduplication Report ──────────────────────────────────────────────────
+        # ── Deduplication Report ──────────────────────────────────────────────
         if not audit_df.empty:
             with st.expander(
                 f"🔁 Deduplication Report — {len(audit_df)} trip(s) merged or resolved",
                 expanded=False,
             ):
                 st.markdown("""
-    **How duplicates were handled:**
-    - **Same destination variants** (e.g. `PUNE` vs `Pune`) → names standardized, quantities summed.
-    - **Genuinely different destinations** → leg with highest invoice quantity kept; others dropped.
-    - Full original values logged below for traceability.
-    """)
+**How duplicates were handled:**
+- **Same destination variants** (e.g. `PUNE` vs `Pune`) → names standardized, quantities summed.
+- **Genuinely different destinations** → leg with highest invoice quantity kept; others dropped.
+- Full original values logged below for traceability.
+""")
                 st.dataframe(
                     audit_df,
                     use_container_width=True,
@@ -688,7 +918,7 @@ if has_trip_data and tab1 is not None:
                     mime="text/csv",
                 )
 
-        # ── Top-level metrics ─────────────────────────────────────────────────────
+        # ── Top-level metrics ─────────────────────────────────────────────────
         total_trips_all  = len(df)
         loaded_trips_all = len(df[df["Trip Type"] == "Loaded"])
         empty_trips_all  = len(df[df["Trip Type"] == "Empty"])
@@ -705,7 +935,7 @@ if has_trip_data and tab1 is not None:
         st.success(f"✅ Loaded **{len(df):,}** unique trip records from **{len(files_data)}** file(s).")
         st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
 
-        # ── Filters ───────────────────────────────────────────────────────────────
+        # ── Filters ───────────────────────────────────────────────────────────
         st.subheader("🔍 Filter Your Data")
 
         clients         = sorted(df["Client"].dropna().unique().tolist())
@@ -728,7 +958,6 @@ if has_trip_data and tab1 is not None:
                 help="Select specific plants, or leave empty / choose 'All Plants' to include everything.",
                 key="plant_select_tab1"
             )
-            # Nothing chosen OR explicit "All Plants" selected → use every plant
             if not selected_plant_input or ALL_PLANTS_LABEL in selected_plant_input:
                 selected_plants = client_plants
             else:
@@ -751,7 +980,7 @@ if has_trip_data and tab1 is not None:
 
         st.divider()
 
-        # ── Apply filters ─────────────────────────────────────────────────────────
+        # ── Apply filters ─────────────────────────────────────────────────────
         if not selected_plants:
             filtered = df[df["Client"] == selected_client].copy()
         else:
@@ -762,7 +991,8 @@ if has_trip_data and tab1 is not None:
         if selected_type != "All Types":
             filtered = filtered[filtered["Trip Type"] == selected_type]
 
-        # ── KPI Cards ─────────────────────────────────────────────────────────────
+        # Rest of Trip Analysis code remains the same...
+        # ── KPI Cards ─────────────────────────────────────────────────────────
         total_trips   = len(filtered)
         loaded_trips  = len(filtered[filtered["Trip Type"] == "Loaded"])
         empty_trips   = len(filtered[filtered["Trip Type"] == "Empty"])
@@ -800,7 +1030,7 @@ if has_trip_data and tab1 is not None:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Destination Summary ───────────────────────────────────────────────────
+        # ── Destination Summary ───────────────────────────────────────────────
         if selected_client.startswith("EMPTY TRIP"):
             st.subheader("📍 Empty Trip Destinations")
         else:
@@ -865,7 +1095,7 @@ if has_trip_data and tab1 is not None:
                         if st.button("🔍", key=f"drill_{destination}_{idx}", help=f"View details for {destination}"):
                             show_trip_details(destination, filtered[filtered["Destination"] == destination].copy())
 
-            # ── Plant Summary ─────────────────────────────────────────────────────
+            # ── Plant Summary ─────────────────────────────────────────────────
             if len(selected_plants) > 1 and unique_plants > 1:
                 st.divider()
                 st.subheader("🏭 Trip Distribution by Plant")
@@ -903,7 +1133,7 @@ if has_trip_data and tab1 is not None:
                         },
                     )
 
-            # ── Empty Trip Movement ───────────────────────────────────────────────
+            # ── Empty Trip Movement ───────────────────────────────────────────
             if selected_client.startswith("EMPTY TRIP"):
                 st.divider()
                 st.subheader("🔄 Empty Trip Movement Analysis")
@@ -923,7 +1153,7 @@ if has_trip_data and tab1 is not None:
                     },
                 )
 
-            # ── Download ──────────────────────────────────────────────────────────
+            # ── Download ──────────────────────────────────────────────────────
             st.divider()
             export_buf = BytesIO()
             with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
@@ -956,23 +1186,13 @@ if has_tat_data and tab2 is not None:
         if df_tat.empty:
             st.warning("⚠️ The TAT file could not be processed. Please check the file format and required columns.")
         else:
-            # Determine if we should filter TAT data based on Trip Analysis filters
-            filtered_trip_nos = None
-            
-            # If trip data is loaded and filtered, use those Trip Nos
+            # Prepare trip filter from Trip Analysis if available
+            trip_filter = None
             if has_trip_data and not filtered.empty and "Trip No" in filtered.columns:
-                filtered_trip_nos = filtered["Trip No"].unique().tolist()
-                st.caption(f"🔗 **Auto-filter enabled:** TAT data will be filtered for **{len(filtered_trip_nos):,}** trip(s) matching the current Trip Analysis selection.")
-                
-                # Option to remove filter
-                if st.checkbox("🔓 Show all TAT records (remove filter)", value=False):
-                    filtered_trip_nos = None
-                    st.success("✅ Showing all TAT records without filtering.")
-            else:
-                st.caption("📊 **Standalone Mode:** Showing all TAT records (no Trip Analysis filter available).")
-
-            # Render the TAT report
-            render_tat_report(df_tat, filtered_trip_nos)
+                trip_filter = filtered["Trip No"].unique().tolist()
+            
+            # Render the TAT report with trip filter option
+            render_tat_report(df_tat, {'trip_nos': trip_filter} if trip_filter else None)
 
 # ── Show message if no data at all ──────────────────────────────────────────
 if not has_trip_data and not has_tat_data:
@@ -993,14 +1213,14 @@ if not has_trip_data and not has_tat_data:
                 <h4>📊 TAT Analysis</h4>
                 <p style="font-size:0.85rem;">Upload TAT data file (.xlsx)</p>
                 <p style="font-size:0.8rem; color: #666;">
-                <strong>Required:</strong> <code>Trip No</code>, <code>Actual DO Receipt (Mins)</code>, <code>Actual Gate In(Mins)</code>, etc.
+                <strong>Required:</strong> <code>Trip No</code>, time duration columns
                 </p>
             </div>
         </div>
         <p style="font-size:0.85rem; margin-top:30px; color: #666;">
         • 🔁 <strong>Smart Deduplication</strong> — duplicate Trip Nos auto-merged<br>
         • 🔍 <strong>Drill-down modal</strong> — click any destination for full trip details<br>
-        • ⏱️ <strong>TAT Analysis</strong> — standalone or filtered turnaround time reporting<br>
+        • ⏱️ <strong>TAT Analysis</strong> — standalone with client/plant/date filters<br>
         • 📊 <strong>Interactive charts</strong> — toggle between Trip Count and Quantity views
         </p>
     </div>
