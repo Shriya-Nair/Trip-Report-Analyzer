@@ -321,13 +321,13 @@ def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
         "client_col": ["Client", "Customer", "Client Name", "Customer Name"],
         "plant_col": ["Plant", "Source Plant", "Source", "Plant Name", "Origin"],
         "trip_no_col": ["Trip No", "Trip Number", "TripNo", "Trip ID"],
+        "destination_col": ["Destination", "To", "Delivery Location", "Unloading Point", "Drop Location"],
         "stage1": ["Actual DO Receipt (Mins)", "DO Receipt (Mins)", "Actual DO Receipt"],
         "stage2": ["Actual Gate In(Mins)", "Gate In (Mins)", "Actual Gate In"],
         "stage3": ["Actual Loaded Exit(Mins)", "Loaded Exit (Mins)", "Actual Loaded Exit"],
         "stage4": ["Actual Gate In for Unloading(Mins)", "Gate In for Unloading (Mins)", "Actual Gate In for Unloading"],
         "stage5": ["Actual Unloaded (Mins)", "Unloaded (Mins)", "Actual Unloaded"],
         "date_col": ["Date", "Start Date", "Trip Date", "Transaction Date"],
-        "destination_col": ["Destination", "To", "Delivery Location", "Unloading Point"],
     }
     
     identified = {}
@@ -345,7 +345,7 @@ def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
 def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
     """
     Process TAT data and return averages for each stage.
-    filters: dict with keys 'client', 'plant', 'trip_nos', 'date_range'
+    filters: dict with keys 'client', 'plant', 'destination', 'trip_nos', 'date_range'
     Returns: (avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_df)
     """
     if df_tat.empty:
@@ -367,6 +367,10 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
         # Filter by plant
         if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
             df_filtered = df_filtered[df_filtered[columns['plant_col']] == filters['plant']]
+        
+        # Filter by destination
+        if filters.get('destination') and filters['destination'] != "All Destinations" and columns['destination_col']:
+            df_filtered = df_filtered[df_filtered[columns['destination_col']] == filters['destination']]
         
         # Filter by date range
         if filters.get('date_range') and columns['date_col']:
@@ -421,6 +425,13 @@ def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
     else:
         options['plants'] = ["All Plants"]
     
+    # Destinations
+    if columns['destination_col']:
+        destinations = sorted(df_tat[columns['destination_col']].dropna().unique().tolist())
+        options['destinations'] = ["All Destinations"] + destinations
+    else:
+        options['destinations'] = ["All Destinations"]
+    
     # Date range
     if columns['date_col']:
         date_series = pd.to_datetime(df_tat[columns['date_col']], errors='coerce')
@@ -445,7 +456,7 @@ def render_tat_report(df_tat, filters=None):
     with st.expander("🔍 TAT Data Filters", expanded=True):
         st.markdown('<div class="filter-section">', unsafe_allow_html=True)
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             # Client filter
@@ -459,6 +470,18 @@ def render_tat_report(df_tat, filters=None):
                 selected_tat_client = "All Clients"
                 st.info("ℹ️ No Client column found in TAT data")
             
+            # Destination filter
+            if len(filter_options['destinations']) > 1:
+                selected_tat_destination = st.selectbox(
+                    "📍 Destination",
+                    filter_options['destinations'],
+                    key="tat_destination_filter"
+                )
+            else:
+                selected_tat_destination = "All Destinations"
+                st.info("ℹ️ No Destination column found in TAT data")
+        
+        with col2:
             # Plant filter
             if len(filter_options['plants']) > 1:
                 selected_tat_plant = st.selectbox(
@@ -469,8 +492,7 @@ def render_tat_report(df_tat, filters=None):
             else:
                 selected_tat_plant = "All Plants"
                 st.info("ℹ️ No Plant column found in TAT data")
-        
-        with col2:
+            
             # Date range filter
             if filter_options['min_date'] and filter_options['max_date']:
                 date_range = st.date_input(
@@ -488,13 +510,43 @@ def render_tat_report(df_tat, filters=None):
                 start_date, end_date = None, None
                 st.info("ℹ️ No Date column found in TAT data")
         
-        # Trip filter option
-        use_trip_filter = st.checkbox(
-            "🔗 Filter by Trip Analysis selection",
-            value=(filters is not None and filters.get('trip_nos') is not None),
-            key="tat_trip_filter_checkbox",
-            help="Filter TAT data to only include trips from the current Trip Analysis selection"
-        )
+        with col3:
+            # Additional filter options
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Trip filter option
+            use_trip_filter = st.checkbox(
+                "🔗 Filter by Trip Analysis selection",
+                value=(filters is not None and filters.get('trip_nos') is not None),
+                key="tat_trip_filter_checkbox",
+                help="Filter TAT data to only include trips from the current Trip Analysis selection"
+            )
+            
+            # Multi-select for multiple destinations
+            if len(filter_options['destinations']) > 1:
+                enable_multi_dest = st.checkbox(
+                    "📍 Multi-Destination Select",
+                    value=False,
+                    key="tat_multi_dest_checkbox",
+                    help="Enable selection of multiple destinations"
+                )
+                
+                if enable_multi_dest:
+                    selected_tat_destinations = st.multiselect(
+                        "Select Destinations",
+                        options=filter_options['destinations'][1:],  # Exclude "All Destinations"
+                        default=[],
+                        key="tat_destination_multiselect",
+                        help="Select specific destinations to analyze"
+                    )
+                    if selected_tat_destinations:
+                        selected_tat_destination = None  # Use multi-select instead
+                    else:
+                        selected_tat_destination = "All Destinations"
+                else:
+                    selected_tat_destinations = None
+            else:
+                selected_tat_destinations = None
         
         # Clear filters button
         col1, col2, col3 = st.columns([1, 1, 2])
@@ -502,7 +554,9 @@ def render_tat_report(df_tat, filters=None):
             if st.button("🗑️ Clear TAT Filters", key="clear_tat_filters"):
                 st.session_state.tat_client_filter = "All Clients"
                 st.session_state.tat_plant_filter = "All Plants"
+                st.session_state.tat_destination_filter = "All Destinations"
                 st.session_state.tat_trip_filter_checkbox = False
+                st.session_state.tat_multi_dest_checkbox = False
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -513,8 +567,10 @@ def render_tat_report(df_tat, filters=None):
     tat_filters = {
         'client': selected_tat_client if 'selected_tat_client' in locals() else "All Clients",
         'plant': selected_tat_plant if 'selected_tat_plant' in locals() else "All Plants",
+        'destination': selected_tat_destination if 'selected_tat_destination' in locals() and selected_tat_destination != "All Destinations" else "All Destinations",
         'date_range': (start_date, end_date) if 'start_date' in locals() else (None, None),
-        'trip_nos': filters.get('trip_nos') if use_trip_filter and filters else None
+        'trip_nos': filters.get('trip_nos') if use_trip_filter and filters else None,
+        'multi_destinations': selected_tat_destinations if 'selected_tat_destinations' in locals() and selected_tat_destinations else None
     }
     
     # Calculate TAT metrics
@@ -531,6 +587,10 @@ def render_tat_report(df_tat, filters=None):
         active_filters.append(f"Client: **{tat_filters['client']}**")
     if tat_filters['plant'] != "All Plants":
         active_filters.append(f"Plant: **{tat_filters['plant']}**")
+    if tat_filters['destination'] != "All Destinations":
+        active_filters.append(f"Destination: **{tat_filters['destination']}**")
+    if tat_filters.get('multi_destinations'):
+        active_filters.append(f"Destinations: **{len(tat_filters['multi_destinations'])}** selected")
     if tat_filters['date_range'][0] and tat_filters['date_range'][1]:
         active_filters.append(f"Date: **{tat_filters['date_range'][0]}** to **{tat_filters['date_range'][1]}**")
     if use_trip_filter and tat_filters['trip_nos']:
@@ -702,19 +762,19 @@ def render_tat_report(df_tat, filters=None):
                 fig_bar.update_layout(height=400, showlegend=True)
                 st.plotly_chart(fig_bar, use_container_width=True)
         
-        # Client/Plant breakdown if those columns exist
+        # Client/Plant/Destination breakdown if those columns exist
         tat_columns = identify_tat_columns(df_tat)
         
-        if tat_columns['client_col'] or tat_columns['plant_col']:
-            with st.expander("📋 TAT by Client & Plant", expanded=False):
-                tab_client, tab_plant = st.tabs(["By Client", "By Plant"])
+        if tat_columns['client_col'] or tat_columns['plant_col'] or tat_columns['destination_col']:
+            with st.expander("📋 TAT by Client, Plant & Destination", expanded=False):
+                tab_client, tab_plant, tab_dest = st.tabs(["By Client", "By Plant", "By Destination"])
                 
                 with tab_client:
                     if tat_columns['client_col'] and tat_columns['client_col'] in filtered_tat_df.columns:
                         client_tat = filtered_tat_df.groupby(tat_columns['client_col']).agg(
-                            Records=('Trip No' if 'Trip No' in filtered_tat_df.columns else filtered_tat_df.columns[0], 'count'),
-                            Avg_Loading=(tat_columns['stage3'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
-                            Avg_Unloading=(tat_columns['stage5'], lambda x: pd.to_numeric(x, errors='coerce').mean())
+                            Records=(tat_columns['trip_no_col'] if tat_columns['trip_no_col'] else filtered_tat_df.columns[0], 'count'),
+                            Avg_Loading=(tat_columns['stage1'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                            Avg_Unloading=(tat_columns['stage4'], lambda x: pd.to_numeric(x, errors='coerce').mean())
                         ).reset_index()
                         client_tat.columns = ['Client', 'Records', 'Avg Loading (min)', 'Avg Unloading (min)']
                         client_tat['Total TAT (min)'] = client_tat['Avg Loading (min)'] + client_tat['Avg Unloading (min)']
@@ -730,9 +790,9 @@ def render_tat_report(df_tat, filters=None):
                 with tab_plant:
                     if tat_columns['plant_col'] and tat_columns['plant_col'] in filtered_tat_df.columns:
                         plant_tat = filtered_tat_df.groupby(tat_columns['plant_col']).agg(
-                            Records=('Trip No' if 'Trip No' in filtered_tat_df.columns else filtered_tat_df.columns[0], 'count'),
-                            Avg_Loading=(tat_columns['stage3'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
-                            Avg_Unloading=(tat_columns['stage5'], lambda x: pd.to_numeric(x, errors='coerce').mean())
+                            Records=(tat_columns['trip_no_col'] if tat_columns['trip_no_col'] else filtered_tat_df.columns[0], 'count'),
+                            Avg_Loading=(tat_columns['stage1'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                            Avg_Unloading=(tat_columns['stage4'], lambda x: pd.to_numeric(x, errors='coerce').mean())
                         ).reset_index()
                         plant_tat.columns = ['Plant', 'Records', 'Avg Loading (min)', 'Avg Unloading (min)']
                         plant_tat['Total TAT (min)'] = plant_tat['Avg Loading (min)'] + plant_tat['Avg Unloading (min)']
@@ -744,6 +804,65 @@ def render_tat_report(df_tat, filters=None):
                         )
                     else:
                         st.info("Plant column not available in TAT data")
+                
+                with tab_dest:
+                    if tat_columns['destination_col'] and tat_columns['destination_col'] in filtered_tat_df.columns:
+                        dest_tat = filtered_tat_df.groupby(tat_columns['destination_col']).agg(
+                            Records=(tat_columns['trip_no_col'] if tat_columns['trip_no_col'] else filtered_tat_df.columns[0], 'count'),
+                            Avg_Loading=(tat_columns['stage1'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                            Avg_Unloading=(tat_columns['stage4'], lambda x: pd.to_numeric(x, errors='coerce').mean())
+                        ).reset_index()
+                        dest_tat.columns = ['Destination', 'Records', 'Avg Loading (min)', 'Avg Unloading (min)']
+                        dest_tat['Total TAT (min)'] = dest_tat['Avg Loading (min)'] + dest_tat['Avg Unloading (min)']
+                        
+                        st.dataframe(
+                            dest_tat.sort_values('Records', ascending=False),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.info("Destination column not available in TAT data")
+        
+        # Destination performance comparison
+        if tat_columns['destination_col'] and tat_columns['destination_col'] in filtered_tat_df.columns:
+            with st.expander("📍 Destination Performance Comparison", expanded=False):
+                # Get top 15 destinations by record count
+                top_destinations = (filtered_tat_df.groupby(tat_columns['destination_col'])
+                                   .size()
+                                   .sort_values(ascending=False)
+                                   .head(15)
+                                   .index
+                                   .tolist())
+                
+                dest_comparison = filtered_tat_df[filtered_tat_df[tat_columns['destination_col']].isin(top_destinations)]
+                
+                # Calculate metrics per destination
+                dest_metrics = dest_comparison.groupby(tat_columns['destination_col']).agg(
+                    Avg_Stage1=(tat_columns['stage1'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                    Avg_Stage2=(tat_columns['stage2'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                    Avg_Stage3=(tat_columns['stage3'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                    Avg_Stage4=(tat_columns['stage4'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                    Avg_Stage5=(tat_columns['stage5'], lambda x: pd.to_numeric(x, errors='coerce').mean()),
+                    Total_Records=(tat_columns['trip_no_col'] if tat_columns['trip_no_col'] else filtered_tat_df.columns[0], 'count')
+                ).reset_index()
+                
+                dest_metrics['Total_Loading'] = dest_metrics['Avg_Stage1'] + dest_metrics['Avg_Stage2'] + dest_metrics['Avg_Stage3']
+                dest_metrics['Total_Unloading'] = dest_metrics['Avg_Stage4'] + dest_metrics['Avg_Stage5']
+                dest_metrics['Total_TAT'] = dest_metrics['Total_Loading'] + dest_metrics['Total_Unloading']
+                
+                # Sort by Total TAT
+                dest_metrics = dest_metrics.sort_values('Total_TAT', ascending=True)
+                
+                fig_dest = px.bar(
+                    dest_metrics,
+                    x=tat_columns['destination_col'],
+                    y=['Total_Loading', 'Total_Unloading'],
+                    title='TAT Comparison by Destination (Top 15)',
+                    labels={tat_columns['destination_col']: 'Destination', 'value': 'Minutes'},
+                    color_discrete_map={'Total_Loading': '#1a73e8', 'Total_Unloading': '#34a853'}
+                )
+                fig_dest.update_layout(xaxis_tickangle=-45, height=500)
+                st.plotly_chart(fig_dest, use_container_width=True)
         
         # Data preview
         with st.expander("👀 Preview Filtered TAT Data", expanded=False):
@@ -818,7 +937,7 @@ with col2:
         "Upload TAT Data File (.xlsx)",
         type=["xlsx"],
         accept_multiple_files=False,
-        help="Upload the TATound Time dataset for standalone analysis.",
+        help="Upload the TAT dataset for standalone analysis.",
         key="tat_uploader"
     )
 
@@ -991,7 +1110,6 @@ if has_trip_data and tab1 is not None:
         if selected_type != "All Types":
             filtered = filtered[filtered["Trip Type"] == selected_type]
 
-        # Rest of Trip Analysis code remains the same...
         # ── KPI Cards ─────────────────────────────────────────────────────────
         total_trips   = len(filtered)
         loaded_trips  = len(filtered[filtered["Trip Type"] == "Loaded"])
@@ -1220,7 +1338,7 @@ if not has_trip_data and not has_tat_data:
         <p style="font-size:0.85rem; margin-top:30px; color: #666;">
         • 🔁 <strong>Smart Deduplication</strong> — duplicate Trip Nos auto-merged<br>
         • 🔍 <strong>Drill-down modal</strong> — click any destination for full trip details<br>
-        • ⏱️ <strong>TAT Analysis</strong> — standalone with client/plant/date filters<br>
+        • ⏱️ <strong>TAT Analysis</strong> — standalone with client/plant/destination/date filters<br>
         • 📊 <strong>Interactive charts</strong> — toggle between Trip Count and Quantity views
         </p>
     </div>
