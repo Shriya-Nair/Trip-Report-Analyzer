@@ -294,6 +294,16 @@ def load_files(files_data: list[tuple]) -> dict:
 
 
 # ── TAT Processing Function ───────────────────────────────────────────────────
+@st.cache_data
+def load_tat_file(tat_file_data):
+    """Load TAT file with caching."""
+    try:
+        df_tat = pd.read_excel(BytesIO(tat_file_data), sheet_name=0)
+        return df_tat, None
+    except Exception as e:
+        return pd.DataFrame(), str(e)
+
+
 def minutes_to_hhmm(minutes: float) -> str:
     """Convert decimal minutes to HH:MM string format."""
     if pd.isna(minutes) or minutes < 0:
@@ -315,7 +325,8 @@ def process_tat_data(df_tat: pd.DataFrame, trip_nos: list = None) -> tuple:
     
     # Filter by Trip Nos if provided
     if trip_nos is not None and len(trip_nos) > 0:
-        df_tat = df_tat[df_tat["Trip No"].isin(trip_nos)].copy()
+        if "Trip No" in df_tat.columns:
+            df_tat = df_tat[df_tat["Trip No"].isin(trip_nos)].copy()
     
     if df_tat.empty:
         return 0, 0, 0, 0, 0, 0
@@ -373,6 +384,14 @@ def render_tat_report(df_tat, filtered_trip_nos=None):
     total_loading = avg_stage1 + avg_stage2 + avg_stage3
     total_unloading = avg_stage4 + avg_stage5
     total_tat = total_loading + total_unloading
+    
+    # Show filter status
+    if filtered_trip_nos is not None and len(filtered_trip_nos) > 0:
+        st.info(f"🔗 **Filter Applied:** TAT data filtered for **{len(filtered_trip_nos):,}** trip(s) matching the current Trip Analysis selection.")
+    else:
+        st.info("📊 **No Filter Applied:** Showing TAT analysis for all records in the TAT file.")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
     
     # KPI Cards
     col1, col2, col3 = st.columns(3)
@@ -484,9 +503,9 @@ def render_tat_report(df_tat, filtered_trip_nos=None):
     st.markdown(table_html, unsafe_allow_html=True)
     
     # Additional insights
-    st.markdown("---")
-    with st.expander("📊 TAT Distribution Insights", expanded=False):
-        if total_tat > 0:
+    if total_tat > 0:
+        st.markdown("---")
+        with st.expander("📊 TAT Distribution Insights", expanded=False):
             loading_pct = (total_loading / total_tat) * 100
             unloading_pct = (total_unloading / total_tat) * 100
             
@@ -498,22 +517,46 @@ def render_tat_report(df_tat, filtered_trip_nos=None):
             
             # Simple bar chart for stage breakdown
             stage_data = pd.DataFrame({
-                'Stage': ['Stage 1', 'Stage 2', 'Stage 3', 'Stage 4', 'Stage 5'],
-                'Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5]
+                'Stage': ['Stage 1\nDO Receipt', 'Stage 2\nGate Entry', 'Stage 3\nLoading Exit', 'Stage 4\nUnload Wait', 'Stage 5\nUnloading'],
+                'Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5],
+                'Phase': ['Loading', 'Loading', 'Loading', 'Unloading', 'Unloading']
             })
             
             fig = px.bar(
                 stage_data,
                 x='Stage',
                 y='Minutes',
-                title='Average Time per Stage',
-                color='Minutes',
-                color_continuous_scale='Viridis',
+                title='Average Time per TAT Stage',
+                color='Phase',
+                color_discrete_map={'Loading': '#1a73e8', 'Unloading': '#34a853'},
                 text='Minutes'
             )
-            fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
-            fig.update_layout(height=400)
+            fig.update_traces(texttemplate='%{text:.1f} min', textposition='outside')
+            fig.update_layout(height=450, showlegend=True)
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Download TAT report
+            tat_export = pd.DataFrame({
+                'Stage': ['Stage 1 - DO Receipt', 'Stage 2 - Gate Entry', 'Stage 3 - Loading Exit',
+                         'Stage 4 - Unloading Wait', 'Stage 5 - Unloading',
+                         'TOTAL LOADING', 'TOTAL UNLOADING', 'TOTAL TAT'],
+                'Description': ['DO Receipt to Gate Entry', 'Gate Entry to Loading Bay', 'Loading Process & Exit',
+                              'Unloading Waiting Time', 'Unloading Process',
+                              'Sum of Stages 1-3', 'Sum of Stages 4-5', 'Loading + Unloading'],
+                'Average Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5,
+                                   total_loading, total_unloading, total_tat],
+                'Average HH:MM': [minutes_to_hhmm(avg_stage1), minutes_to_hhmm(avg_stage2), minutes_to_hhmm(avg_stage3),
+                                 minutes_to_hhmm(avg_stage4), minutes_to_hhmm(avg_stage5),
+                                 minutes_to_hhmm(total_loading), minutes_to_hhmm(total_unloading), minutes_to_hhmm(total_tat)]
+            })
+            
+            csv_tat = tat_export.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download TAT Report (CSV)",
+                data=csv_tat,
+                file_name="tat_report.csv",
+                mime="text/csv",
+            )
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -521,24 +564,66 @@ st.title("🚛 Monthly Trip Report Analyzer")
 st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination.")
 st.divider()
 
-uploaded_files = st.file_uploader(
-    "Upload Trip Report(s) (.xlsx)",
-    type=["xlsx"],
-    accept_multiple_files=True,
-    help="You can upload multiple monthly reports at once.",
-)
+# ── File Upload Section ──────────────────────────────────────────────────────
+col1, col2 = st.columns(2)
 
-# ── TAT File Upload ──────────────────────────────────────────────────────────
-tat_file = st.file_uploader(
-    "📊 Upload TAT Data File (.xlsx)",
-    type=["xlsx"],
-    accept_multiple_files=False,
-    help="Upload the Turnaround Time dataset for analysis.",
-    key="tat_uploader"
-)
+with col1:
+    st.markdown("### 📂 Trip Reports")
+    uploaded_files = st.file_uploader(
+        "Upload Trip Report(s) (.xlsx)",
+        type=["xlsx"],
+        accept_multiple_files=True,
+        help="You can upload multiple monthly reports at once.",
+        key="trip_uploader"
+    )
 
-# ── Main Logic ────────────────────────────────────────────────────────────────
-if uploaded_files:
+with col2:
+    st.markdown("### 📊 TAT Data")
+    tat_file = st.file_uploader(
+        "Upload TAT Data File (.xlsx)",
+        type=["xlsx"],
+        accept_multiple_files=False,
+        help="Upload the Turnaround Time dataset for standalone analysis.",
+        key="tat_uploader"
+    )
+
+st.divider()
+
+# ── Initialize session state for tab selection ───────────────────────────────
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "Trip Analysis"
+
+# ── Determine available tabs ────────────────────────────────────────────────
+has_trip_data = uploaded_files is not None and len(uploaded_files) > 0
+has_tat_data = tat_file is not None
+
+# ── Create tabs dynamically ──────────────────────────────────────────────────
+if has_trip_data or has_tat_data:
+    tab_labels = []
+    if has_trip_data:
+        tab_labels.append("🚛 Trip Analysis")
+    if has_tat_data:
+        tab_labels.append("📊 TAT Report")
+    
+    if len(tab_labels) == 2:
+        tab1, tab2 = st.tabs(tab_labels)
+    elif len(tab_labels) == 1:
+        if tab_labels[0] == "🚛 Trip Analysis":
+            tab1 = st.container()
+            tab2 = None
+        else:
+            tab2 = st.container()
+            tab1 = None
+else:
+    tab1 = st.container()
+    tab2 = None
+
+# ── Load Trip Data ───────────────────────────────────────────────────────────
+df = pd.DataFrame()
+audit_df = pd.DataFrame()
+filtered = pd.DataFrame()
+
+if has_trip_data:
     files_data = [(f.name, f.read()) for f in uploaded_files]
     result = load_files(files_data)
 
@@ -556,57 +641,53 @@ if uploaded_files:
 
     if df.empty:
         st.error("No valid data could be loaded. Please check your files.")
-        st.stop()
+        if not has_tat_data:
+            st.stop()
 
-    # ── Load TAT Data ─────────────────────────────────────────────────────────
-    df_tat = pd.DataFrame()
-    if tat_file is not None:
-        try:
-            df_tat = pd.read_excel(BytesIO(tat_file.read()), sheet_name=0)
-            # Ensure Trip No column exists for filtering
-            if "Trip No" not in df_tat.columns:
-                st.warning("⚠️ TAT file does not contain 'Trip No' column. Filtering by Trip No will not be possible.")
-        except Exception as e:
-            st.error(f"Could not read TAT file: {e}")
+# ── Load TAT Data ────────────────────────────────────────────────────────────
+df_tat = pd.DataFrame()
+if has_tat_data:
+    df_tat, tat_error = load_tat_file(tat_file.read())
+    if tat_error:
+        st.error(f"Could not read TAT file: {tat_error}")
+        df_tat = pd.DataFrame()
 
-    # ── Deduplication Report ──────────────────────────────────────────────────
-    if not audit_df.empty:
-        with st.expander(
-            f"🔁 Deduplication Report — {len(audit_df)} trip(s) merged or resolved",
-            expanded=False,
-        ):
-            st.markdown("""
-**How duplicates were handled:**
-- **Same destination variants** (e.g. `PUNE` vs `Pune`) → names standardized, quantities summed.
-- **Genuinely different destinations** → leg with highest invoice quantity kept; others dropped.
-- Full original values logged below for traceability.
-""")
-            st.dataframe(
-                audit_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Trip No": "Trip No",
-                    "Action": st.column_config.TextColumn("Action Taken"),
-                    "Destinations Found": "All Destinations Found",
-                    "Canonical Destination": "Resolved Destination",
-                    "Original Qty Values": "Original Qty Values",
-                    "Final Qty": st.column_config.NumberColumn("Final Qty", format="%.2f"),
-                    "Rows Affected": "Rows Merged",
-                },
-            )
-            st.download_button(
-                "📥 Download Deduplication Audit Log (CSV)",
-                data=audit_df.to_csv(index=False).encode("utf-8"),
-                file_name="deduplication_audit.csv",
-                mime="text/csv",
-            )
+# ── TAB 1: Trip Analysis ────────────────────────────────────────────────────
+if has_trip_data and tab1 is not None:
+    with (tab1 if tab2 is not None else st.container()):
+        # ── Deduplication Report ──────────────────────────────────────────────────
+        if not audit_df.empty:
+            with st.expander(
+                f"🔁 Deduplication Report — {len(audit_df)} trip(s) merged or resolved",
+                expanded=False,
+            ):
+                st.markdown("""
+    **How duplicates were handled:**
+    - **Same destination variants** (e.g. `PUNE` vs `Pune`) → names standardized, quantities summed.
+    - **Genuinely different destinations** → leg with highest invoice quantity kept; others dropped.
+    - Full original values logged below for traceability.
+    """)
+                st.dataframe(
+                    audit_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Trip No": "Trip No",
+                        "Action": st.column_config.TextColumn("Action Taken"),
+                        "Destinations Found": "All Destinations Found",
+                        "Canonical Destination": "Resolved Destination",
+                        "Original Qty Values": "Original Qty Values",
+                        "Final Qty": st.column_config.NumberColumn("Final Qty", format="%.2f"),
+                        "Rows Affected": "Rows Merged",
+                    },
+                )
+                st.download_button(
+                    "📥 Download Deduplication Audit Log (CSV)",
+                    data=audit_df.to_csv(index=False).encode("utf-8"),
+                    file_name="deduplication_audit.csv",
+                    mime="text/csv",
+                )
 
-    # ── Create Tabs ───────────────────────────────────────────────────────────
-    tab1, tab2 = st.tabs(["🚛 Trip Analysis", "📊 TAT Report"])
-
-    # ── TAB 1: Trip Analysis ────────────────────────────────────────────────
-    with tab1:
         # ── Top-level metrics ─────────────────────────────────────────────────────
         total_trips_all  = len(df)
         loaded_trips_all = len(df[df["Trip Type"] == "Loaded"])
@@ -654,7 +735,8 @@ if uploaded_files:
                 selected_plants = selected_plant_input
             if not selected_plants:
                 st.warning("⚠️ No plants found for this client.")
-                st.stop()
+                if not has_tat_data:
+                    st.stop()
 
         col3, col4, col5 = st.columns(3)
         with col3:
@@ -670,8 +752,11 @@ if uploaded_files:
         st.divider()
 
         # ── Apply filters ─────────────────────────────────────────────────────────
-        filtered = df[df["Client"] == selected_client].copy()
-        filtered = filtered[filtered["Plant"].isin(selected_plants)]
+        if not selected_plants:
+            filtered = df[df["Client"] == selected_client].copy()
+        else:
+            filtered = df[df["Client"] == selected_client].copy()
+            filtered = filtered[filtered["Plant"].isin(selected_plants)]
         if selected_month != "All Months":
             filtered = filtered[filtered["Month"] == selected_month]
         if selected_type != "All Types":
@@ -865,54 +950,58 @@ if uploaded_files:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-    # ── TAB 2: TAT Report ────────────────────────────────────────────────────
-    with tab2:
-        if tat_file is None:
-            st.info("📊 Please upload the TAT data file (.xlsx) using the file uploader above to view the Turnaround Time Report.")
-            st.markdown("""
-            ### 📋 Expected TAT File Format
-            The TAT file should contain the following columns (measured in minutes):
-            - **Trip No** - Trip number for filtering
-            - **Actual DO Receipt (Mins)** - Stage 1: DO Receipt duration
-            - **Actual Gate In(Mins)** - Stage 2: Gate Entry duration
-            - **Actual Loaded Exit(Mins)** - Stage 3: Loading and Exit duration
-            - **Actual Gate In for Unloading(Mins)** - Stage 4: Unloading waiting duration
-            - **Actual Unloaded (Mins)** - Stage 5: Unloading process duration
-            """)
-        elif df_tat.empty:
-            st.warning("⚠️ The TAT file could not be processed. Please check the file format.")
+# ── TAB 2: TAT Report ──────────────────────────────────────────────────────
+if has_tat_data and tab2 is not None:
+    with (tab2 if has_trip_data and has_tat_data else st.container()):
+        if df_tat.empty:
+            st.warning("⚠️ The TAT file could not be processed. Please check the file format and required columns.")
         else:
-            # Get filtered Trip Nos based on current Trip Analysis selections
-            # We need to access the filtered dataframe from the trip analysis
-            # For TAT filtering, we'll use the same client/plant filters
+            # Determine if we should filter TAT data based on Trip Analysis filters
             filtered_trip_nos = None
             
-            # Check if we have a filtered dataframe from the trip analysis
-            if 'filtered' in locals() and not filtered.empty:
-                if "Trip No" in filtered.columns:
-                    filtered_trip_nos = filtered["Trip No"].unique().tolist()
-                    st.caption(f"🔗 Filtering TAT data for **{len(filtered_trip_nos):,}** trip(s) from the current Trip Analysis selection.")
+            # If trip data is loaded and filtered, use those Trip Nos
+            if has_trip_data and not filtered.empty and "Trip No" in filtered.columns:
+                filtered_trip_nos = filtered["Trip No"].unique().tolist()
+                st.caption(f"🔗 **Auto-filter enabled:** TAT data will be filtered for **{len(filtered_trip_nos):,}** trip(s) matching the current Trip Analysis selection.")
+                
+                # Option to remove filter
+                if st.checkbox("🔓 Show all TAT records (remove filter)", value=False):
+                    filtered_trip_nos = None
+                    st.success("✅ Showing all TAT records without filtering.")
+            else:
+                st.caption("📊 **Standalone Mode:** Showing all TAT records (no Trip Analysis filter available).")
 
             # Render the TAT report
             render_tat_report(df_tat, filtered_trip_nos)
 
-else:
+# ── Show message if no data at all ──────────────────────────────────────────
+if not has_trip_data and not has_tat_data:
     st.markdown("""
     <div style="text-align:center; padding: 60px 20px; color: #888;">
         <div style="font-size:4rem;">📂</div>
         <h3 style="color:#555;">No file uploaded yet</h3>
-        <p>Upload your monthly trip report(s) above to get started.</p>
-        <p style="font-size:0.85rem; margin-top:10px;">
-        <strong>Required columns:</strong> <code>Client</code>, <code>Destination</code>,
-        <code>Start Date</code>, <code>Trip No</code>, <code>Trip Type</code><br>
-        <strong>Optional:</strong> <code>Inv Qty</code> · <code>Source</code> / <code>Plant</code><br><br>
-        • 🔁 <strong>Smart Deduplication</strong> — duplicate Trip Nos auto-merged;
-          fuzzy matching resolves destination name variants<br>
-        • 🏭 <strong>Multi-Plant Selection</strong> — analyze multiple plants together<br>
-        • 📦 <strong>Decimal Precision</strong> — quantities to 2 decimal places<br>
+        <p>Upload your files above to get started:</p>
+        <div style="display: flex; justify-content: center; gap: 40px; margin-top: 30px; flex-wrap: wrap;">
+            <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); max-width: 300px;">
+                <h4>🚛 Trip Analysis</h4>
+                <p style="font-size:0.85rem;">Upload monthly trip reports (.xlsx)</p>
+                <p style="font-size:0.8rem; color: #666;">
+                <strong>Required:</strong> <code>Client</code>, <code>Destination</code>, <code>Start Date</code>, <code>Trip No</code>, <code>Trip Type</code>
+                </p>
+            </div>
+            <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); max-width: 300px;">
+                <h4>📊 TAT Analysis</h4>
+                <p style="font-size:0.85rem;">Upload TAT data file (.xlsx)</p>
+                <p style="font-size:0.8rem; color: #666;">
+                <strong>Required:</strong> <code>Trip No</code>, <code>Actual DO Receipt (Mins)</code>, <code>Actual Gate In(Mins)</code>, etc.
+                </p>
+            </div>
+        </div>
+        <p style="font-size:0.85rem; margin-top:30px; color: #666;">
+        • 🔁 <strong>Smart Deduplication</strong> — duplicate Trip Nos auto-merged<br>
         • 🔍 <strong>Drill-down modal</strong> — click any destination for full trip details<br>
-        • 📊 <strong>Interactive charts</strong> — toggle between Trip Count and Quantity views<br>
-        • ⏱️ <strong>TAT Analysis</strong> — upload a TAT file for turnaround time reporting
+        • ⏱️ <strong>TAT Analysis</strong> — standalone or filtered turnaround time reporting<br>
+        • 📊 <strong>Interactive charts</strong> — toggle between Trip Count and Quantity views
         </p>
     </div>
     """, unsafe_allow_html=True)
