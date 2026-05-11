@@ -40,6 +40,41 @@ st.markdown("""
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(26,115,232,0.3);
     }
+    /* TAT Report Table Styling */
+    .tat-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: 'Segoe UI', sans-serif;
+        font-size: 0.9rem;
+    }
+    .tat-table th {
+        background-color: #1a73e8;
+        color: white;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+    }
+    .tat-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    .tat-table tr:hover {
+        background-color: #f8f9fa;
+    }
+    .loading-row {
+        background-color: #d4edda !important;
+        font-weight: 700;
+    }
+    .unloading-row {
+        background-color: #d4edda !important;
+        font-weight: 700;
+    }
+    .total-row {
+        background-color: #f0f0f0 !important;
+        font-weight: 700;
+        color: #d32f2f;
+        font-size: 1.1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -258,6 +293,229 @@ def load_files(files_data: list[tuple]) -> dict:
     return {"df": combined, "audit_df": audit_df, "messages": messages}
 
 
+# ── TAT Processing Function ───────────────────────────────────────────────────
+def minutes_to_hhmm(minutes: float) -> str:
+    """Convert decimal minutes to HH:MM string format."""
+    if pd.isna(minutes) or minutes < 0:
+        return "00:00"
+    
+    total_minutes = int(round(minutes))
+    hours = total_minutes // 60
+    mins = total_minutes % 60
+    return f"{hours:02d}:{mins:02d}"
+
+
+def process_tat_data(df_tat: pd.DataFrame, trip_nos: list = None) -> tuple:
+    """
+    Process TAT data and return averages for each stage.
+    Returns: (avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records)
+    """
+    if df_tat.empty:
+        return 0, 0, 0, 0, 0, 0
+    
+    # Filter by Trip Nos if provided
+    if trip_nos is not None and len(trip_nos) > 0:
+        df_tat = df_tat[df_tat["Trip No"].isin(trip_nos)].copy()
+    
+    if df_tat.empty:
+        return 0, 0, 0, 0, 0, 0
+    
+    total_records = len(df_tat)
+    
+    # Map columns for TAT stages
+    col_mapping = {
+        "stage1": ["Actual DO Receipt (Mins)", "DO Receipt (Mins)", "Actual DO Receipt"],
+        "stage2": ["Actual Gate In(Mins)", "Gate In (Mins)", "Actual Gate In"],
+        "stage3": ["Actual Loaded Exit(Mins)", "Loaded Exit (Mins)", "Actual Loaded Exit"],
+        "stage4": ["Actual Gate In for Unloading(Mins)", "Gate In for Unloading (Mins)", "Actual Gate In for Unloading"],
+        "stage5": ["Actual Unloaded (Mins)", "Unloaded (Mins)", "Actual Unloaded"],
+    }
+    
+    actual_columns = {}
+    for stage, possible_names in col_mapping.items():
+        found_col = None
+        for name in possible_names:
+            if name in df_tat.columns:
+                found_col = name
+                break
+        actual_columns[stage] = found_col
+    
+    # Calculate averages for each stage
+    averages = {}
+    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
+        col = actual_columns[stage]
+        if col and col in df_tat.columns:
+            avg_val = pd.to_numeric(df_tat[col], errors='coerce').mean()
+            averages[stage] = avg_val if not pd.isna(avg_val) else 0
+        else:
+            averages[stage] = 0
+    
+    return (
+        averages["stage1"],
+        averages["stage2"],
+        averages["stage3"],
+        averages["stage4"],
+        averages["stage5"],
+        total_records
+    )
+
+
+# ── TAT Report Rendering ─────────────────────────────────────────────────────
+def render_tat_report(df_tat, filtered_trip_nos=None):
+    """Render the TAT Report tab content."""
+    st.subheader("📊 Turnaround Time (TAT) Analysis Report")
+    st.markdown("---")
+    
+    # Calculate TAT metrics
+    avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records = process_tat_data(df_tat, filtered_trip_nos)
+    
+    # Calculate totals
+    total_loading = avg_stage1 + avg_stage2 + avg_stage3
+    total_unloading = avg_stage4 + avg_stage5
+    total_tat = total_loading + total_unloading
+    
+    # KPI Cards
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(
+            f'<div class="metric-card">'
+            f'<div class="metric-number">{minutes_to_hhmm(total_loading)}</div>'
+            f'<div class="metric-label">⏱️ Avg Loading Time</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    with col2:
+        st.markdown(
+            f'<div class="metric-card">'
+            f'<div class="metric-number">{minutes_to_hhmm(total_unloading)}</div>'
+            f'<div class="metric-label">⏱️ Avg Unloading Time</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    with col3:
+        st.markdown(
+            f'<div class="metric-card">'
+            f'<div class="metric-number">{total_records:,}</div>'
+            f'<div class="metric-label">📋 Total Records Analyzed</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Detailed TAT Table
+    st.markdown("### 📈 Detailed TAT Breakdown")
+    
+    # Prepare table data
+    table_data = [
+        {
+            "Stage": "Stage 1",
+            "Description": "DO Receipt to Gate Entry",
+            "Average Time (Minutes)": f"{avg_stage1:.2f}",
+            "Average Time (HH:MM)": minutes_to_hhmm(avg_stage1),
+            "Type": "loading"
+        },
+        {
+            "Stage": "Stage 2",
+            "Description": "Gate Entry to Loading Bay",
+            "Average Time (Minutes)": f"{avg_stage2:.2f}",
+            "Average Time (HH:MM)": minutes_to_hhmm(avg_stage2),
+            "Type": "loading"
+        },
+        {
+            "Stage": "Stage 3",
+            "Description": "Loading Process & Exit",
+            "Average Time (Minutes)": f"{avg_stage3:.2f}",
+            "Average Time (HH:MM)": minutes_to_hhmm(avg_stage3),
+            "Type": "loading"
+        },
+        {
+            "Stage": "Stage 4",
+            "Description": "Unloading Waiting Time",
+            "Average Time (Minutes)": f"{avg_stage4:.2f}",
+            "Average Time (HH:MM)": minutes_to_hhmm(avg_stage4),
+            "Type": "unloading"
+        },
+        {
+            "Stage": "Stage 5",
+            "Description": "Unloading Process",
+            "Average Time (Minutes)": f"{avg_stage5:.2f}",
+            "Average Time (HH:MM)": minutes_to_hhmm(avg_stage5),
+            "Type": "unloading"
+        },
+    ]
+    
+    # Render table using custom HTML
+    table_html = '<table class="tat-table"><thead><tr>'
+    table_html += '<th>Stage</th><th>Description</th><th>Average Time (Minutes)</th><th>Average Time (HH:MM)</th>'
+    table_html += '</tr></thead><tbody>'
+    
+    for row in table_data:
+        table_html += '<tr>'
+        table_html += f'<td>{row["Stage"]}</td>'
+        table_html += f'<td>{row["Description"]}</td>'
+        table_html += f'<td>{row["Average Time (Minutes)"]}</td>'
+        table_html += f'<td>{row["Average Time (HH:MM)"]}</td>'
+        table_html += '</tr>'
+    
+    # Add Total Loading row (green background)
+    table_html += '<tr class="loading-row">'
+    table_html += '<td colspan="2"><strong>⏱️ Total time for Loading</strong></td>'
+    table_html += f'<td><strong>{total_loading:.2f}</strong></td>'
+    table_html += f'<td><strong>{minutes_to_hhmm(total_loading)}</strong></td>'
+    table_html += '</tr>'
+    
+    # Add Total Unloading row (green background)
+    table_html += '<tr class="unloading-row">'
+    table_html += '<td colspan="2"><strong>⏱️ Total time for Unloading</strong></td>'
+    table_html += f'<td><strong>{total_unloading:.2f}</strong></td>'
+    table_html += f'<td><strong>{minutes_to_hhmm(total_unloading)}</strong></td>'
+    table_html += '</tr>'
+    
+    # Add Grand Total row (grey background, red text)
+    table_html += '<tr class="total-row">'
+    table_html += '<td colspan="2"><strong>⏱️ TOTAL TAT</strong></td>'
+    table_html += f'<td><strong>{total_tat:.2f}</strong></td>'
+    table_html += f'<td><strong>{minutes_to_hhmm(total_tat)}</strong></td>'
+    table_html += '</tr>'
+    
+    table_html += '</tbody></table>'
+    
+    st.markdown(table_html, unsafe_allow_html=True)
+    
+    # Additional insights
+    st.markdown("---")
+    with st.expander("📊 TAT Distribution Insights", expanded=False):
+        if total_tat > 0:
+            loading_pct = (total_loading / total_tat) * 100
+            unloading_pct = (total_unloading / total_tat) * 100
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Loading Phase %", f"{loading_pct:.1f}%")
+            with col2:
+                st.metric("Unloading Phase %", f"{unloading_pct:.1f}%")
+            
+            # Simple bar chart for stage breakdown
+            stage_data = pd.DataFrame({
+                'Stage': ['Stage 1', 'Stage 2', 'Stage 3', 'Stage 4', 'Stage 5'],
+                'Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5]
+            })
+            
+            fig = px.bar(
+                stage_data,
+                x='Stage',
+                y='Minutes',
+                title='Average Time per Stage',
+                color='Minutes',
+                color_continuous_scale='Viridis',
+                text='Minutes'
+            )
+            fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+
+
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🚛 Monthly Trip Report Analyzer")
 st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination.")
@@ -268,6 +526,15 @@ uploaded_files = st.file_uploader(
     type=["xlsx"],
     accept_multiple_files=True,
     help="You can upload multiple monthly reports at once.",
+)
+
+# ── TAT File Upload ──────────────────────────────────────────────────────────
+tat_file = st.file_uploader(
+    "📊 Upload TAT Data File (.xlsx)",
+    type=["xlsx"],
+    accept_multiple_files=False,
+    help="Upload the Turnaround Time dataset for analysis.",
+    key="tat_uploader"
 )
 
 # ── Main Logic ────────────────────────────────────────────────────────────────
@@ -290,6 +557,17 @@ if uploaded_files:
     if df.empty:
         st.error("No valid data could be loaded. Please check your files.")
         st.stop()
+
+    # ── Load TAT Data ─────────────────────────────────────────────────────────
+    df_tat = pd.DataFrame()
+    if tat_file is not None:
+        try:
+            df_tat = pd.read_excel(BytesIO(tat_file.read()), sheet_name=0)
+            # Ensure Trip No column exists for filtering
+            if "Trip No" not in df_tat.columns:
+                st.warning("⚠️ TAT file does not contain 'Trip No' column. Filtering by Trip No will not be possible.")
+        except Exception as e:
+            st.error(f"Could not read TAT file: {e}")
 
     # ── Deduplication Report ──────────────────────────────────────────────────
     if not audit_df.empty:
@@ -324,262 +602,299 @@ if uploaded_files:
                 mime="text/csv",
             )
 
-    # ── Top-level metrics ─────────────────────────────────────────────────────
-    total_trips_all  = len(df)
-    loaded_trips_all = len(df[df["Trip Type"] == "Loaded"])
-    empty_trips_all  = len(df[df["Trip Type"] == "Empty"])
-    total_qty_all    = df["Inv Qty"].sum()
+    # ── Create Tabs ───────────────────────────────────────────────────────────
+    tab1, tab2 = st.tabs(["🚛 Trip Analysis", "📊 TAT Report"])
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("Total Trips (All)", f"{total_trips_all:,}")
-    with c2: st.metric("Loaded Trips", f"{loaded_trips_all:,}",
-                       delta=f"{loaded_trips_all/total_trips_all*100:.1f}%" if total_trips_all else "0%")
-    with c3: st.metric("Empty Trips", f"{empty_trips_all:,}",
-                       delta=f"{empty_trips_all/total_trips_all*100:.1f}%" if total_trips_all else "0%")
-    with c4: st.metric("Total Quantity", f"{total_qty_all:,.2f}")
+    # ── TAB 1: Trip Analysis ────────────────────────────────────────────────
+    with tab1:
+        # ── Top-level metrics ─────────────────────────────────────────────────────
+        total_trips_all  = len(df)
+        loaded_trips_all = len(df[df["Trip Type"] == "Loaded"])
+        empty_trips_all  = len(df[df["Trip Type"] == "Empty"])
+        total_qty_all    = df["Inv Qty"].sum()
 
-    st.success(f"✅ Loaded **{len(df):,}** unique trip records from **{len(files_data)}** file(s).")
-    st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.metric("Total Trips (All)", f"{total_trips_all:,}")
+        with c2: st.metric("Loaded Trips", f"{loaded_trips_all:,}",
+                           delta=f"{loaded_trips_all/total_trips_all*100:.1f}%" if total_trips_all else "0%")
+        with c3: st.metric("Empty Trips", f"{empty_trips_all:,}",
+                           delta=f"{empty_trips_all/total_trips_all*100:.1f}%" if total_trips_all else "0%")
+        with c4: st.metric("Total Quantity", f"{total_qty_all:,.2f}")
 
-    # ── Filters ───────────────────────────────────────────────────────────────
-    st.subheader("🔍 Filter Your Data")
+        st.success(f"✅ Loaded **{len(df):,}** unique trip records from **{len(files_data)}** file(s).")
+        st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
 
-    clients         = sorted(df["Client"].dropna().unique().tolist())
-    regular_clients = [c for c in clients if not c.startswith("EMPTY TRIP")]
-    empty_trip_opts = [c for c in clients if c.startswith("EMPTY TRIP")]
-    client_options  = regular_clients + empty_trip_opts
+        # ── Filters ───────────────────────────────────────────────────────────────
+        st.subheader("🔍 Filter Your Data")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        selected_client = st.selectbox("🏢 Select Client", client_options)
-    with col2:
-        client_plants = sorted(df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist())
-        ALL_PLANTS_LABEL = "All Plants"
-        plant_options = [ALL_PLANTS_LABEL] + client_plants
-        selected_plant_input = st.multiselect(
-            "🏭 Select Plant/Source",
-            options=plant_options,
-            default=[],
-            placeholder="Pick 'All Plants' to include all…",
-            help="Select specific plants, or leave empty / choose 'All Plants' to include everything.",
-        )
-        # Nothing chosen OR explicit "All Plants" selected → use every plant
-        if not selected_plant_input or ALL_PLANTS_LABEL in selected_plant_input:
-            selected_plants = client_plants
-        else:
-            selected_plants = selected_plant_input
-        if not selected_plants:
-            st.warning("⚠️ No plants found for this client.")
-            st.stop()
+        clients         = sorted(df["Client"].dropna().unique().tolist())
+        regular_clients = [c for c in clients if not c.startswith("EMPTY TRIP")]
+        empty_trip_opts = [c for c in clients if c.startswith("EMPTY TRIP")]
+        client_options  = regular_clients + empty_trip_opts
 
-    col3, col4, col5 = st.columns(3)
-    with col3:
-        months         = sorted(df["Month"].dropna().unique().tolist(), reverse=True)
-        selected_month = st.selectbox("📅 Select Month", ["All Months"] + months)
-    with col4:
-        trip_type_opts = ["All Types"] + sorted(df["Trip Type"].dropna().unique().tolist())
-        selected_type  = st.selectbox("🔄 Trip Type", trip_type_opts)
-    with col5:
-        if st.button("🗑️ Clear All Filters", use_container_width=True):
-            st.rerun()
-
-    st.divider()
-
-    # ── Apply filters ─────────────────────────────────────────────────────────
-    filtered = df[df["Client"] == selected_client].copy()
-    filtered = filtered[filtered["Plant"].isin(selected_plants)]
-    if selected_month != "All Months":
-        filtered = filtered[filtered["Month"] == selected_month]
-    if selected_type != "All Types":
-        filtered = filtered[filtered["Trip Type"] == selected_type]
-
-    # ── KPI Cards ─────────────────────────────────────────────────────────────
-    total_trips   = len(filtered)
-    loaded_trips  = len(filtered[filtered["Trip Type"] == "Loaded"])
-    empty_trips   = len(filtered[filtered["Trip Type"] == "Empty"])
-    unique_dest   = filtered["Destination"].nunique()
-    unique_plants = filtered["Plant"].nunique()
-    unique_months = filtered["Month"].nunique()
-    total_qty     = filtered["Inv Qty"].sum()
-
-    st.caption(
-        f"📌 **Selected Plants ({len(selected_plants)}):** "
-        f"{', '.join(selected_plants[:5])}{'...' if len(selected_plants) > 5 else ''}"
-    )
-
-    def _card(col, val, label):
-        with col:
-            st.markdown(
-                f'<div class="metric-card"><div class="metric-number">{val}</div>'
-                f'<div class="metric-label">{label}</div></div>',
-                unsafe_allow_html=True,
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_client = st.selectbox("🏢 Select Client", client_options, key="client_select_tab1")
+        with col2:
+            client_plants = sorted(df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist())
+            ALL_PLANTS_LABEL = "All Plants"
+            plant_options = [ALL_PLANTS_LABEL] + client_plants
+            selected_plant_input = st.multiselect(
+                "🏭 Select Plant/Source",
+                options=plant_options,
+                default=[],
+                placeholder="Pick 'All Plants' to include all…",
+                help="Select specific plants, or leave empty / choose 'All Plants' to include everything.",
+                key="plant_select_tab1"
             )
+            # Nothing chosen OR explicit "All Plants" selected → use every plant
+            if not selected_plant_input or ALL_PLANTS_LABEL in selected_plant_input:
+                selected_plants = client_plants
+            else:
+                selected_plants = selected_plant_input
+            if not selected_plants:
+                st.warning("⚠️ No plants found for this client.")
+                st.stop()
 
-    if selected_client.startswith("EMPTY TRIP"):
-        cols = st.columns(5)
-        pairs = zip(cols,
-                    [f"{total_trips:,}", unique_dest, unique_plants, unique_months, f"{total_qty:,.2f}"],
-                    ["Total Empty Trips","Unique Destinations","Source Plants","Months Covered","Total Quantity"])
-    else:
-        cols = st.columns(6)
-        pairs = zip(cols,
-                    [f"{total_trips:,}", loaded_trips, empty_trips, unique_dest, unique_plants, f"{total_qty:,.2f}"],
-                    ["Total Trips","Loaded Trips","Empty Trips","Unique Destinations","Plants/Sources","Total Quantity"])
+        col3, col4, col5 = st.columns(3)
+        with col3:
+            months         = sorted(df["Month"].dropna().unique().tolist(), reverse=True)
+            selected_month = st.selectbox("📅 Select Month", ["All Months"] + months, key="month_select_tab1")
+        with col4:
+            trip_type_opts = ["All Types"] + sorted(df["Trip Type"].dropna().unique().tolist())
+            selected_type  = st.selectbox("🔄 Trip Type", trip_type_opts, key="type_select_tab1")
+        with col5:
+            if st.button("🗑️ Clear All Filters", use_container_width=True, key="clear_tab1"):
+                st.rerun()
 
-    for c, v, l in pairs:
-        _card(c, v, l)
+        st.divider()
 
-    st.markdown("<br>", unsafe_allow_html=True)
+        # ── Apply filters ─────────────────────────────────────────────────────────
+        filtered = df[df["Client"] == selected_client].copy()
+        filtered = filtered[filtered["Plant"].isin(selected_plants)]
+        if selected_month != "All Months":
+            filtered = filtered[filtered["Month"] == selected_month]
+        if selected_type != "All Types":
+            filtered = filtered[filtered["Trip Type"] == selected_type]
 
-    # ── Destination Summary ───────────────────────────────────────────────────
-    if selected_client.startswith("EMPTY TRIP"):
-        st.subheader("📍 Empty Trip Destinations")
-    else:
-        st.subheader(f"📍 Trips to Each Destination — {selected_client}")
-    st.caption("💡 **Click the 🔍 button** next to any destination to see detailed trip information")
+        # ── KPI Cards ─────────────────────────────────────────────────────────────
+        total_trips   = len(filtered)
+        loaded_trips  = len(filtered[filtered["Trip Type"] == "Loaded"])
+        empty_trips   = len(filtered[filtered["Trip Type"] == "Empty"])
+        unique_dest   = filtered["Destination"].nunique()
+        unique_plants = filtered["Plant"].nunique()
+        unique_months = filtered["Month"].nunique()
+        total_qty     = filtered["Inv Qty"].sum()
 
-    if filtered.empty:
-        st.info("No trips found for the selected filters.")
-    else:
-        agg_dict = {
-            "Total_Trips": ("Trip No", "count"),
-            "Total_Qty":   ("Inv Qty", "sum"),
-            "Plants":      ("Plant",   lambda x: x.nunique()),
-        }
-        if "Trip Type" in filtered.columns and filtered["Trip Type"].nunique() > 1:
-            agg_dict["Loaded_Trips"] = ("Trip Type", lambda x: (x == "Loaded").sum())
-            agg_dict["Empty_Trips"]  = ("Trip Type", lambda x: (x == "Empty").sum())
-
-        dest_summary = (
-            filtered.groupby("Destination").agg(**agg_dict).reset_index()
-            .sort_values("Total_Trips", ascending=False)
-            .rename(columns={
-                "Total_Trips": "Total Trips", "Total_Qty": "Total Quantity",
-                "Plants": "Plants Used", "Loaded_Trips": "Loaded Trips",
-                "Empty_Trips": "Empty Trips",
-            })
+        st.caption(
+            f"📌 **Selected Plants ({len(selected_plants)}):** "
+            f"{', '.join(selected_plants[:5])}{'...' if len(selected_plants) > 5 else ''}"
         )
 
-        chart_type = st.radio("📊 Display Chart Type", ["Total Trips", "Total Quantity"], horizontal=True)
-
-        if chart_type == "Total Trips":
-            fig = px.bar(dest_summary.head(20), x="Destination", y="Total Trips",
-                         title="Top 20 Destinations by Trip Count",
-                         color="Total Trips", color_continuous_scale="Blues", text="Total Trips")
-            fig.update_traces(textposition="outside")
-        else:
-            fig = px.bar(dest_summary.head(20), x="Destination", y="Total Quantity",
-                         title="Top 20 Destinations by Total Quantity",
-                         color="Total Quantity", color_continuous_scale="Greens", text="Total Quantity")
-            fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-
-        fig.update_traces(hovertemplate="<b>%{x}</b><br>%{y:,.2f}<extra></extra>")
-        fig.update_layout(xaxis_tickangle=-45, height=500)
-
-        chart_col, table_col = st.columns([1, 1])
-        with chart_col:
-            st.plotly_chart(fig, use_container_width=True)
-
-        with table_col:
-            st.markdown("#### 📋 Destinations Summary")
-            st.info("💡 Click **🔍** to drill into any destination")
-            for idx, row in dest_summary.iterrows():
-                destination = row["Destination"]
-                c1, c2, c3, c4, c5 = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
-                with c1: st.write(f"**{destination}**")
-                with c2: st.write(f"{row['Total Trips']} trips")
-                with c3: st.write(f"📦 {row['Total Quantity']:,.2f}")
-                with c4:
-                    if "Loaded Trips" in row:
-                        st.write(f"🟢 {row['Loaded Trips']} / 🔴 {row['Empty Trips']}")
-                with c5:
-                    if st.button("🔍", key=f"drill_{destination}_{idx}", help=f"View details for {destination}"):
-                        show_trip_details(destination, filtered[filtered["Destination"] == destination].copy())
-
-        # ── Plant Summary ─────────────────────────────────────────────────────
-        if len(selected_plants) > 1 and unique_plants > 1:
-            st.divider()
-            st.subheader("🏭 Trip Distribution by Plant")
-
-            plant_summary = (
-                filtered.groupby("Plant")
-                .agg(
-                    Total_Trips=("Trip No", "count"),
-                    Total_Qty=("Inv Qty", "sum"),
-                    Loaded_Trips=("Trip Type", lambda x: (x == "Loaded").sum()),
-                    Empty_Trips=("Trip Type",  lambda x: (x == "Empty").sum()),
-                    Unique_Destinations=("Destination", "nunique"),
+        def _card(col, val, label):
+            with col:
+                st.markdown(
+                    f'<div class="metric-card"><div class="metric-number">{val}</div>'
+                    f'<div class="metric-label">{label}</div></div>',
+                    unsafe_allow_html=True,
                 )
-                .reset_index()
+
+        if selected_client.startswith("EMPTY TRIP"):
+            cols = st.columns(5)
+            pairs = zip(cols,
+                        [f"{total_trips:,}", unique_dest, unique_plants, unique_months, f"{total_qty:,.2f}"],
+                        ["Total Empty Trips","Unique Destinations","Source Plants","Months Covered","Total Quantity"])
+        else:
+            cols = st.columns(6)
+            pairs = zip(cols,
+                        [f"{total_trips:,}", loaded_trips, empty_trips, unique_dest, unique_plants, f"{total_qty:,.2f}"],
+                        ["Total Trips","Loaded Trips","Empty Trips","Unique Destinations","Plants/Sources","Total Quantity"])
+
+        for c, v, l in pairs:
+            _card(c, v, l)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Destination Summary ───────────────────────────────────────────────────
+        if selected_client.startswith("EMPTY TRIP"):
+            st.subheader("📍 Empty Trip Destinations")
+        else:
+            st.subheader(f"📍 Trips to Each Destination — {selected_client}")
+        st.caption("💡 **Click the 🔍 button** next to any destination to see detailed trip information")
+
+        if filtered.empty:
+            st.info("No trips found for the selected filters.")
+        else:
+            agg_dict = {
+                "Total_Trips": ("Trip No", "count"),
+                "Total_Qty":   ("Inv Qty", "sum"),
+                "Plants":      ("Plant",   lambda x: x.nunique()),
+            }
+            if "Trip Type" in filtered.columns and filtered["Trip Type"].nunique() > 1:
+                agg_dict["Loaded_Trips"] = ("Trip Type", lambda x: (x == "Loaded").sum())
+                agg_dict["Empty_Trips"]  = ("Trip Type", lambda x: (x == "Empty").sum())
+
+            dest_summary = (
+                filtered.groupby("Destination").agg(**agg_dict).reset_index()
                 .sort_values("Total_Trips", ascending=False)
+                .rename(columns={
+                    "Total_Trips": "Total Trips", "Total_Qty": "Total Quantity",
+                    "Plants": "Plants Used", "Loaded_Trips": "Loaded Trips",
+                    "Empty_Trips": "Empty Trips",
+                })
             )
 
-            pc, pt = st.columns(2)
-            with pc:
-                qf = px.bar(plant_summary, x="Plant", y="Total_Qty",
-                            title="Total Quantity by Plant",
-                            color="Total_Qty", color_continuous_scale="Greens", text="Total_Qty")
-                qf.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                qf.update_layout(xaxis_tickangle=-45, height=350)
-                st.plotly_chart(qf, use_container_width=True)
-            with pt:
+            chart_type = st.radio("📊 Display Chart Type", ["Total Trips", "Total Quantity"], horizontal=True)
+
+            if chart_type == "Total Trips":
+                fig = px.bar(dest_summary.head(20), x="Destination", y="Total Trips",
+                             title="Top 20 Destinations by Trip Count",
+                             color="Total Trips", color_continuous_scale="Blues", text="Total Trips")
+                fig.update_traces(textposition="outside")
+            else:
+                fig = px.bar(dest_summary.head(20), x="Destination", y="Total Quantity",
+                             title="Top 20 Destinations by Total Quantity",
+                             color="Total Quantity", color_continuous_scale="Greens", text="Total Quantity")
+                fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
+
+            fig.update_traces(hovertemplate="<b>%{x}</b><br>%{y:,.2f}<extra></extra>")
+            fig.update_layout(xaxis_tickangle=-45, height=500)
+
+            chart_col, table_col = st.columns([1, 1])
+            with chart_col:
+                st.plotly_chart(fig, use_container_width=True)
+
+            with table_col:
+                st.markdown("#### 📋 Destinations Summary")
+                st.info("💡 Click **🔍** to drill into any destination")
+                for idx, row in dest_summary.iterrows():
+                    destination = row["Destination"]
+                    c1, c2, c3, c4, c5 = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
+                    with c1: st.write(f"**{destination}**")
+                    with c2: st.write(f"{row['Total Trips']} trips")
+                    with c3: st.write(f"📦 {row['Total Quantity']:,.2f}")
+                    with c4:
+                        if "Loaded Trips" in row:
+                            st.write(f"🟢 {row['Loaded Trips']} / 🔴 {row['Empty Trips']}")
+                    with c5:
+                        if st.button("🔍", key=f"drill_{destination}_{idx}", help=f"View details for {destination}"):
+                            show_trip_details(destination, filtered[filtered["Destination"] == destination].copy())
+
+            # ── Plant Summary ─────────────────────────────────────────────────────
+            if len(selected_plants) > 1 and unique_plants > 1:
+                st.divider()
+                st.subheader("🏭 Trip Distribution by Plant")
+
+                plant_summary = (
+                    filtered.groupby("Plant")
+                    .agg(
+                        Total_Trips=("Trip No", "count"),
+                        Total_Qty=("Inv Qty", "sum"),
+                        Loaded_Trips=("Trip Type", lambda x: (x == "Loaded").sum()),
+                        Empty_Trips=("Trip Type",  lambda x: (x == "Empty").sum()),
+                        Unique_Destinations=("Destination", "nunique"),
+                    )
+                    .reset_index()
+                    .sort_values("Total_Trips", ascending=False)
+                )
+
+                pc, pt = st.columns(2)
+                with pc:
+                    qf = px.bar(plant_summary, x="Plant", y="Total_Qty",
+                                title="Total Quantity by Plant",
+                                color="Total_Qty", color_continuous_scale="Greens", text="Total_Qty")
+                    qf.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
+                    qf.update_layout(xaxis_tickangle=-45, height=350)
+                    st.plotly_chart(qf, use_container_width=True)
+                with pt:
+                    st.dataframe(
+                        plant_summary, use_container_width=True, height=350, hide_index=True,
+                        column_config={
+                            "Plant": "Source Plant",
+                            "Total_Trips": "Total Trips",
+                            "Total_Qty": st.column_config.NumberColumn("Total Quantity", format="%.2f"),
+                            "Loaded_Trips": "Loaded", "Empty_Trips": "Empty",
+                            "Unique_Destinations": "Destinations",
+                        },
+                    )
+
+            # ── Empty Trip Movement ───────────────────────────────────────────────
+            if selected_client.startswith("EMPTY TRIP"):
+                st.divider()
+                st.subheader("🔄 Empty Trip Movement Analysis")
+                empty_movement = (
+                    filtered.groupby(["Plant", "Destination"])
+                    .agg(Number_of_Empty_Trips=("Trip No", "count"), Total_Quantity=("Inv Qty", "sum"))
+                    .reset_index()
+                    .sort_values("Number_of_Empty_Trips", ascending=False)
+                    .head(20)
+                )
                 st.dataframe(
-                    plant_summary, use_container_width=True, height=350, hide_index=True,
+                    empty_movement, use_container_width=True, hide_index=True,
                     column_config={
-                        "Plant": "Source Plant",
-                        "Total_Trips": "Total Trips",
-                        "Total_Qty": st.column_config.NumberColumn("Total Quantity", format="%.2f"),
-                        "Loaded_Trips": "Loaded", "Empty_Trips": "Empty",
-                        "Unique_Destinations": "Destinations",
+                        "Plant": "Source Plant", "Destination": "Destination",
+                        "Number_of_Empty_Trips": "Trip Count",
+                        "Total_Quantity": st.column_config.NumberColumn("Total Quantity", format="%.2f"),
                     },
                 )
 
-        # ── Empty Trip Movement ───────────────────────────────────────────────
-        if selected_client.startswith("EMPTY TRIP"):
+            # ── Download ──────────────────────────────────────────────────────────
             st.divider()
-            st.subheader("🔄 Empty Trip Movement Analysis")
-            empty_movement = (
-                filtered.groupby(["Plant", "Destination"])
-                .agg(Number_of_Empty_Trips=("Trip No", "count"), Total_Quantity=("Inv Qty", "sum"))
-                .reset_index()
-                .sort_values("Number_of_Empty_Trips", ascending=False)
-                .head(20)
+            export_buf = BytesIO()
+            with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
+                dest_summary.to_excel(writer, sheet_name="Destination Summary", index=False)
+                filtered.to_excel(writer, sheet_name="Raw Trips", index=False)
+                if len(selected_plants) > 1 and unique_plants > 1:
+                    plant_summary.to_excel(writer, sheet_name="Plant Summary", index=False)
+                if selected_client.startswith("EMPTY TRIP"):
+                    empty_movement.to_excel(writer, sheet_name="Empty Trip Movement", index=False)
+                if not audit_df.empty:
+                    audit_df.to_excel(writer, sheet_name="Dedup Audit Log", index=False)
+            export_buf.seek(0)
+
+            plants_label = (
+                f"{len(selected_plants)}_plants" if len(selected_plants) > 1
+                else selected_plants[0].replace(" ", "_")
             )
-            st.dataframe(
-                empty_movement, use_container_width=True, hide_index=True,
-                column_config={
-                    "Plant": "Source Plant", "Destination": "Destination",
-                    "Number_of_Empty_Trips": "Trip Count",
-                    "Total_Quantity": st.column_config.NumberColumn("Total Quantity", format="%.2f"),
-                },
+            month_label  = selected_month.replace(" ", "_") if selected_month != "All Months" else "All_Months"
+            client_label = selected_client.replace(" ", "_").replace("-", "_")[:50]
+            st.download_button(
+                label="⬇️ Download Summary as Excel",
+                data=export_buf,
+                file_name=f"{client_label}_{plants_label}_{month_label}_trip_summary.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-        # ── Download ──────────────────────────────────────────────────────────
-        st.divider()
-        export_buf = BytesIO()
-        with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
-            dest_summary.to_excel(writer, sheet_name="Destination Summary", index=False)
-            filtered.to_excel(writer, sheet_name="Raw Trips", index=False)
-            if len(selected_plants) > 1 and unique_plants > 1:
-                plant_summary.to_excel(writer, sheet_name="Plant Summary", index=False)
-            if selected_client.startswith("EMPTY TRIP"):
-                empty_movement.to_excel(writer, sheet_name="Empty Trip Movement", index=False)
-            if not audit_df.empty:
-                audit_df.to_excel(writer, sheet_name="Dedup Audit Log", index=False)
-        export_buf.seek(0)
+    # ── TAB 2: TAT Report ────────────────────────────────────────────────────
+    with tab2:
+        if tat_file is None:
+            st.info("📊 Please upload the TAT data file (.xlsx) using the file uploader above to view the Turnaround Time Report.")
+            st.markdown("""
+            ### 📋 Expected TAT File Format
+            The TAT file should contain the following columns (measured in minutes):
+            - **Trip No** - Trip number for filtering
+            - **Actual DO Receipt (Mins)** - Stage 1: DO Receipt duration
+            - **Actual Gate In(Mins)** - Stage 2: Gate Entry duration
+            - **Actual Loaded Exit(Mins)** - Stage 3: Loading and Exit duration
+            - **Actual Gate In for Unloading(Mins)** - Stage 4: Unloading waiting duration
+            - **Actual Unloaded (Mins)** - Stage 5: Unloading process duration
+            """)
+        elif df_tat.empty:
+            st.warning("⚠️ The TAT file could not be processed. Please check the file format.")
+        else:
+            # Get filtered Trip Nos based on current Trip Analysis selections
+            # We need to access the filtered dataframe from the trip analysis
+            # For TAT filtering, we'll use the same client/plant filters
+            filtered_trip_nos = None
+            
+            # Check if we have a filtered dataframe from the trip analysis
+            if 'filtered' in locals() and not filtered.empty:
+                if "Trip No" in filtered.columns:
+                    filtered_trip_nos = filtered["Trip No"].unique().tolist()
+                    st.caption(f"🔗 Filtering TAT data for **{len(filtered_trip_nos):,}** trip(s) from the current Trip Analysis selection.")
 
-        plants_label = (
-            f"{len(selected_plants)}_plants" if len(selected_plants) > 1
-            else selected_plants[0].replace(" ", "_")
-        )
-        month_label  = selected_month.replace(" ", "_") if selected_month != "All Months" else "All_Months"
-        client_label = selected_client.replace(" ", "_").replace("-", "_")[:50]
-        st.download_button(
-            label="⬇️ Download Summary as Excel",
-            data=export_buf,
-            file_name=f"{client_label}_{plants_label}_{month_label}_trip_summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+            # Render the TAT report
+            render_tat_report(df_tat, filtered_trip_nos)
 
 else:
     st.markdown("""
@@ -596,7 +911,8 @@ else:
         • 🏭 <strong>Multi-Plant Selection</strong> — analyze multiple plants together<br>
         • 📦 <strong>Decimal Precision</strong> — quantities to 2 decimal places<br>
         • 🔍 <strong>Drill-down modal</strong> — click any destination for full trip details<br>
-        • 📊 <strong>Interactive charts</strong> — toggle between Trip Count and Quantity views
+        • 📊 <strong>Interactive charts</strong> — toggle between Trip Count and Quantity views<br>
+        • ⏱️ <strong>TAT Analysis</strong> — upload a TAT file for turnaround time reporting
         </p>
     </div>
     """, unsafe_allow_html=True)
