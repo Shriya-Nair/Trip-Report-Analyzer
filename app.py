@@ -746,24 +746,6 @@ def render_tat_report(df_tat, filters=None):
     loading_hhmm = minutes_to_hhmm(total_loading)
     unloading_hhmm = minutes_to_hhmm(total_unloading)
     total_hhmm = minutes_to_hhmm(total_tat)
-    
-    st.markdown(f'''
-    <div class="grand-total-container">
-        <div class="grand-total-content">
-            <div class="grand-total-label">🔴 TOTAL TAT (Loading + Unloading)</div>
-            <div class="grand-total-time">
-                <div class="grand-total-minutes">{total_tat:.2f} min</div>
-                <div class="grand-total-hhmm">{total_hhmm}</div>
-            </div>
-        </div>
-        <div class="grand-total-formula">
-            Total Loading TAT ({loading_hhmm}) + Total Unloading TAT ({unloading_hhmm}) = <strong>{total_hhmm}</strong>
-        </div>
-    </div>
-    ''', unsafe_allow_html=True)
-    
-    if total_tat > 0 and not filtered_tat_df.empty:
-        st.markdown("---")
         
         # ── CLIENT | PLANT | TAT SUMMARY TABLE ───────────────────────────────
         st.markdown("### 📊 Client / Plant TAT Summary")
@@ -843,40 +825,6 @@ def render_tat_report(df_tat, filters=None):
             
             table_html += '<tr class="grand-total-row">'
             table_html += f'<td colspan="{label_colspan}" class="grand-total-label">GRAND TOTAL - All Records</td>'
-            table_html += f'<td class="loading-cell">{weighted_s1:.1f}<br><small>{minutes_to_hhmm(weighted_s1)}</small></td>'
-            table_html += f'<td class="loading-cell">{weighted_s2:.1f}<br><small>{minutes_to_hhmm(weighted_s2)}</small></td>'
-            table_html += f'<td class="loading-cell">{weighted_s3:.1f}<br><small>{minutes_to_hhmm(weighted_s3)}</small></td>'
-            table_html += f'<td class="loading-cell"><strong>{weighted_load:.1f}</strong></td>'
-            table_html += f'<td class="loading-cell">{minutes_to_hhmm(weighted_load)}</td>'
-            table_html += f'<td class="unloading-cell">{weighted_s4:.1f}<br><small>{minutes_to_hhmm(weighted_s4)}</small></td>'
-            table_html += f'<td class="unloading-cell">{weighted_s5:.1f}<br><small>{minutes_to_hhmm(weighted_s5)}</small></td>'
-            table_html += f'<td class="unloading-cell"><strong>{weighted_unload:.1f}</strong></td>'
-            table_html += f'<td class="unloading-cell">{minutes_to_hhmm(weighted_unload)}</td>'
-            table_html += f'<td class="total-cell"><strong>{weighted_total:.1f}</strong></td>'
-            table_html += f'<td class="total-cell">{minutes_to_hhmm(weighted_total)}</td>'
-            table_html += '</tr>'
-            
-            # Grand Total row
-            total_trips_count = int(summary_df["No_of_Trips"].sum())
-            weighted_s1 = (summary_df["Stage1_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s2 = (summary_df["Stage2_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s3 = (summary_df["Stage3_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s4 = (summary_df["Stage4_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s5 = (summary_df["Stage5_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_load = weighted_s1 + weighted_s2 + weighted_s3
-            weighted_unload = weighted_s4 + weighted_s5
-            weighted_total = weighted_load + weighted_unload
-            
-            # Calculate colspan for label columns - FIXED: Removed No. of Trips from colspan
-            label_colspan = 0
-            if has_client: label_colspan += 1
-            if has_plant: label_colspan += 1
-            # Note: No. of Trips column is NOT included in colspan anymore
-            
-            table_html += '<tr class="grand-total-row">'
-            table_html += f'<td colspan="{label_colspan}" class="grand-total-label">GRAND TOTAL - All Records</td>'
-            # Add No. of Trips as a separate cell, not part of colspan
-            table_html += f'<td><strong>{total_trips_count}</strong></td>'
             table_html += f'<td class="loading-cell">{weighted_s1:.1f}<br><small>{minutes_to_hhmm(weighted_s1)}</small></td>'
             table_html += f'<td class="loading-cell">{weighted_s2:.1f}<br><small>{minutes_to_hhmm(weighted_s2)}</small></td>'
             table_html += f'<td class="loading-cell">{weighted_s3:.1f}<br><small>{minutes_to_hhmm(weighted_s3)}</small></td>'
