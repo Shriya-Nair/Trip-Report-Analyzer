@@ -469,69 +469,6 @@ def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
     else: options['min_date'], options['max_date'] = None, None
     return options, columns
 
-
-def calculate_tat_distribution(df_tat, tat_columns):
-    if df_tat.empty: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    
-    stage_times = {}
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = tat_columns[stage]
-        stage_times[stage] = pd.to_numeric(df_tat[col], errors='coerce').fillna(0) if col and col in df_tat.columns else pd.Series([0]*len(df_tat))
-    
-    loading_time = stage_times["stage1"] + stage_times["stage2"] + stage_times["stage3"]
-    unloading_time = stage_times["stage4"] + stage_times["stage5"]
-    total_time = loading_time + unloading_time
-    
-    loading_ranges = [
-        ("0-20 min", 0, 20), ("20-40 min", 20, 40), ("40-60 min", 40, 60),
-        ("60-80 min", 60, 80), ("80-100 min", 80, 100), ("100-120 min", 100, 120), ("120+ min", 120, float('inf'))
-    ]
-    unloading_ranges = [
-        ("0-30 min", 0, 30), ("30-60 min", 30, 60), ("60-90 min", 60, 90),
-        ("90-120 min", 90, 120), ("120-150 min", 120, 150), ("150-180 min", 150, 180), ("180+ min", 180, float('inf'))
-    ]
-    total_ranges = [
-        ("0-50 min", 0, 50), ("50-100 min", 50, 100), ("100-150 min", 100, 150),
-        ("150-200 min", 150, 200), ("200-250 min", 200, 250), ("250-300 min", 250, 300), ("300+ min", 300, float('inf'))
-    ]
-    
-    def categorize_time(time_series, ranges):
-        categories = []
-        for time_val in time_series:
-            categorized = "N/A"
-            for label, low, high in ranges:
-                if low <= time_val < high:
-                    categorized = label
-                    break
-            categories.append(categorized)
-        return categories
-    
-    def create_dist_table(categories, ranges, time_series):
-        dist_data = []
-        for label, low, high in ranges:
-            count = categories.count(label)
-            percentage = (count / len(categories) * 100) if len(categories) > 0 else 0
-            range_times = [time_series.iloc[i] for i, cat in enumerate(categories) if cat == label]
-            avg_time = sum(range_times) / len(range_times) if range_times else 0
-            dist_data.append({
-                "Time Range": label, "No. of Trips": count, "% of Total": f"{percentage:.1f}%",
-                "Avg Time (min)": f"{avg_time:.1f}", "Avg Time (HH:MM)": minutes_to_hhmm(avg_time)
-            })
-        total_count = len(categories)
-        total_avg = time_series.mean() if total_count > 0 else 0
-        dist_data.append({
-            "Time Range": "TOTAL", "No. of Trips": total_count, "% of Total": "100.0%",
-            "Avg Time (min)": f"{total_avg:.1f}", "Avg Time (HH:MM)": minutes_to_hhmm(total_avg)
-        })
-        return pd.DataFrame(dist_data)
-    
-    return (
-        create_dist_table(categorize_time(loading_time, loading_ranges), loading_ranges, loading_time),
-        create_dist_table(categorize_time(unloading_time, unloading_ranges), unloading_ranges, unloading_time),
-        create_dist_table(categorize_time(total_time, total_ranges), total_ranges, total_time)
-    )
-
-
 def calculate_client_plant_tat_summary(df_tat, tat_columns):
     """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary."""
     if df_tat.empty: return pd.DataFrame()
