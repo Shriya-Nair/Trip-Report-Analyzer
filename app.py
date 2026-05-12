@@ -746,6 +746,24 @@ def render_tat_report(df_tat, filters=None):
     loading_hhmm = minutes_to_hhmm(total_loading)
     unloading_hhmm = minutes_to_hhmm(total_unloading)
     total_hhmm = minutes_to_hhmm(total_tat)
+    
+    st.markdown(f'''
+    <div class="grand-total-container">
+        <div class="grand-total-content">
+            <div class="grand-total-label">🔴 TOTAL TAT (Loading + Unloading)</div>
+            <div class="grand-total-time">
+                <div class="grand-total-minutes">{total_tat:.2f} min</div>
+                <div class="grand-total-hhmm">{total_hhmm}</div>
+            </div>
+        </div>
+        <div class="grand-total-formula">
+            Total Loading TAT ({loading_hhmm}) + Total Unloading TAT ({unloading_hhmm}) = <strong>{total_hhmm}</strong>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    if total_tat > 0 and not filtered_tat_df.empty:
+        st.markdown("---")
         
         # ── CLIENT | PLANT | TAT SUMMARY TABLE ───────────────────────────────
         st.markdown("### 📊 Client / Plant TAT Summary")
@@ -806,7 +824,7 @@ def render_tat_report(df_tat, filters=None):
                 table_html += f'<td class="total-cell">{row["Total_TAT_HHMM"]}</td>'
                 table_html += '</tr>'
             
-            # Grand Total row
+            # Grand Total row - CORRECTED ALIGNMENT
             total_trips_count = int(summary_df["No_of_Trips"].sum())
             weighted_s1 = (summary_df["Stage1_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_s2 = (summary_df["Stage2_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
@@ -817,14 +835,15 @@ def render_tat_report(df_tat, filters=None):
             weighted_unload = weighted_s4 + weighted_s5
             weighted_total = weighted_load + weighted_unload
             
-            # Calculate colspan for label columns
+            # Calculate colspan for label columns (Client + Plant only, NOT No. of Trips)
             label_colspan = 0
             if has_client: label_colspan += 1
             if has_plant: label_colspan += 1
-            label_colspan += 1  # For No. of Trips column
             
             table_html += '<tr class="grand-total-row">'
             table_html += f'<td colspan="{label_colspan}" class="grand-total-label">GRAND TOTAL - All Records</td>'
+            # No. of Trips as separate cell
+            table_html += f'<td><strong>{total_trips_count}</strong></td>'
             table_html += f'<td class="loading-cell">{weighted_s1:.1f}<br><small>{minutes_to_hhmm(weighted_s1)}</small></td>'
             table_html += f'<td class="loading-cell">{weighted_s2:.1f}<br><small>{minutes_to_hhmm(weighted_s2)}</small></td>'
             table_html += f'<td class="loading-cell">{weighted_s3:.1f}<br><small>{minutes_to_hhmm(weighted_s3)}</small></td>'
@@ -906,7 +925,6 @@ def render_tat_report(df_tat, filters=None):
             st.download_button("📥 Download TAT Summary (CSV)", data=tat_export.to_csv(index=False).encode('utf-8'), file_name="tat_summary_report.csv", mime="text/csv")
         with col2:
             st.download_button("📥 Download Filtered TAT Data (CSV)", data=filtered_tat_df.to_csv(index=False).encode('utf-8'), file_name="tat_filtered_data.csv", mime="text/csv")
-
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🚛 Monthly Trip Report Analyzer")
