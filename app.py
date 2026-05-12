@@ -124,59 +124,6 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* Distribution Table Styling */
-    .dist-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 15px 0;
-        font-size: 0.9rem;
-    }
-    .dist-table th {
-        background: #1a73e8;
-        color: white;
-        padding: 12px;
-        text-align: center;
-        font-weight: 600;
-    }
-    .dist-table td {
-        padding: 10px 12px;
-        text-align: center;
-        border-bottom: 1px solid #e0e0e0;
-    }
-    .dist-table tr:hover { background-color: #f8f9fa; }
-    .dist-table .total-row {
-        background-color: #d4edda !important;
-        font-weight: 700;
-        color: #155724;
-    }
-    
-    /* Performance Table Styling */
-    .perf-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 15px 0;
-        font-size: 0.9rem;
-    }
-    .perf-table th {
-        background: #333;
-        color: white;
-        padding: 12px;
-        text-align: center;
-        font-weight: 600;
-    }
-    .perf-table td {
-        padding: 10px 12px;
-        text-align: center;
-        border-bottom: 1px solid #e0e0e0;
-    }
-    .perf-table tr:hover { background-color: #f8f9fa; }
-    .perf-excellent { background-color: #d4edda !important; }
-    .perf-very-good { background-color: #d1ecf1 !important; }
-    .perf-good { background-color: #fff3cd !important; }
-    .perf-average { background-color: #ffeaa7 !important; }
-    .perf-below { background-color: #f8d7da !important; }
-    .perf-poor { background-color: #f5c6cb !important; font-weight: 700; }
-    
     /* Summary Table Styling */
     .summary-table {
         width: 100%;
@@ -187,20 +134,31 @@ st.markdown("""
     .summary-table th {
         background: #1a73e8;
         color: white;
-        padding: 10px;
+        padding: 10px 8px;
         text-align: center;
         font-weight: 600;
         border: 1px solid #1557b0;
+        white-space: nowrap;
     }
     .summary-table td {
         padding: 8px 10px;
         text-align: center;
         border: 1px solid #e0e0e0;
+        white-space: nowrap;
     }
     .summary-table tr:hover { background-color: #f8f9fa; }
     .summary-table .header-row th {
         background: #0d47a1;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
+    }
+    .summary-table .client-col {
+        text-align: left;
+        font-weight: 500;
+        min-width: 200px;
+    }
+    .summary-table .plant-col {
+        text-align: left;
+        min-width: 150px;
     }
     .summary-table .loading-cell {
         background-color: #e3f2fd;
@@ -217,9 +175,16 @@ st.markdown("""
     .summary-table .grand-total-row {
         background-color: #f0f0f0 !important;
         font-weight: 700;
+        border-top: 2px solid #d32f2f;
     }
     .summary-table .grand-total-row td {
         border-top: 2px solid #d32f2f;
+        font-weight: 700;
+    }
+    .summary-table .grand-total-label {
+        text-align: right;
+        font-weight: 700;
+        color: #d32f2f;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -505,11 +470,14 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
         Loading_TAT=("_loading_tat", "mean"),
         Unloading_TAT=("_unloading_tat", "mean"),
         Total_TAT=("_total_tat", "mean"),
-        Min_TAT=("_total_tat", "min"),
-        Max_TAT=("_total_tat", "max"),
     ).reset_index()
     
     # Add HH:MM columns
+    summary["Stage1_HHMM"] = summary["Stage1_Avg"].apply(minutes_to_hhmm)
+    summary["Stage2_HHMM"] = summary["Stage2_Avg"].apply(minutes_to_hhmm)
+    summary["Stage3_HHMM"] = summary["Stage3_Avg"].apply(minutes_to_hhmm)
+    summary["Stage4_HHMM"] = summary["Stage4_Avg"].apply(minutes_to_hhmm)
+    summary["Stage5_HHMM"] = summary["Stage5_Avg"].apply(minutes_to_hhmm)
     summary["Loading_TAT_HHMM"] = summary["Loading_TAT"].apply(minutes_to_hhmm)
     summary["Unloading_TAT_HHMM"] = summary["Unloading_TAT"].apply(minutes_to_hhmm)
     summary["Total_TAT_HHMM"] = summary["Total_TAT"].apply(minutes_to_hhmm)
@@ -684,8 +652,10 @@ def render_tat_report(df_tat, filters=None):
             
             # Header row 1
             table_html += '<tr class="header-row">'
-            if has_client: table_html += '<th rowspan="2">Client</th>'
-            if has_plant: table_html += '<th rowspan="2">Plant</th>'
+            if has_client: 
+                table_html += '<th rowspan="2" style="min-width:200px;">Client</th>'
+            if has_plant: 
+                table_html += '<th rowspan="2" style="min-width:150px;">Plant</th>'
             table_html += '<th rowspan="2">No. of<br>Trips</th>'
             table_html += '<th colspan="5" style="background:#1a73e8;">LOADING TAT (S1+S2+S3)</th>'
             table_html += '<th colspan="2" style="background:#34a853;">UNLOADING TAT<br>(S4+S5)</th>'
@@ -694,7 +664,7 @@ def render_tat_report(df_tat, filters=None):
             
             # Header row 2
             table_html += '<tr>'
-            table_html += '<th>S1<br>(DO Receipt)</th><th>S2<br>(Gate Entry)</th><th>S3<br>(Loading Exit)</th>'
+            table_html += '<th>S1</th><th>S2</th><th>S3</th>'
             table_html += '<th>Total Loading<br>(min)</th><th>Total Loading<br>(HH:MM)</th>'
             table_html += '<th>Total Unloading<br>(min)</th><th>Total Unloading<br>(HH:MM)</th>'
             table_html += '<th>Total TAT<br>(min)</th><th>Total TAT<br>(HH:MM)</th>'
@@ -704,12 +674,14 @@ def render_tat_report(df_tat, filters=None):
             # Data rows
             for _, row in summary_df.iterrows():
                 table_html += '<tr>'
-                if has_client: table_html += f'<td style="text-align:left;font-weight:500;">{row[tat_columns["client_col"]]}</td>'
-                if has_plant: table_html += f'<td style="text-align:left;">{row[tat_columns["plant_col"]]}</td>'
+                if has_client: 
+                    table_html += f'<td class="client-col">{row[tat_columns["client_col"]]}</td>'
+                if has_plant: 
+                    table_html += f'<td class="plant-col">{row[tat_columns["plant_col"]]}</td>'
                 table_html += f'<td>{int(row["No_of_Trips"])}</td>'
-                table_html += f'<td class="loading-cell">{row["Stage1_Avg"]:.1f}</td>'
-                table_html += f'<td class="loading-cell">{row["Stage2_Avg"]:.1f}</td>'
-                table_html += f'<td class="loading-cell">{row["Stage3_Avg"]:.1f}</td>'
+                table_html += f'<td class="loading-cell">{row["Stage1_Avg"]:.1f}<br><small>{row["Stage1_HHMM"]}</small></td>'
+                table_html += f'<td class="loading-cell">{row["Stage2_Avg"]:.1f}<br><small>{row["Stage2_HHMM"]}</small></td>'
+                table_html += f'<td class="loading-cell">{row["Stage3_Avg"]:.1f}<br><small>{row["Stage3_HHMM"]}</small></td>'
                 table_html += f'<td class="loading-cell"><strong>{row["Loading_TAT"]:.1f}</strong></td>'
                 table_html += f'<td class="loading-cell">{row["Loading_TAT_HHMM"]}</td>'
                 table_html += f'<td class="unloading-cell"><strong>{row["Unloading_TAT"]:.1f}</strong></td>'
@@ -719,16 +691,7 @@ def render_tat_report(df_tat, filters=None):
                 table_html += '</tr>'
             
             # Grand Total row
-            table_html += '<tr class="grand-total-row">'
-            if has_client: table_html += '<td colspan="1"><strong>GRAND TOTAL</strong></td>'
-            colspan_val = 1
-            if has_client and has_plant: colspan_val = 2
-            elif has_client or has_plant: colspan_val = 1
-            else: colspan_val = 1
-            table_html += f'<td colspan="{colspan_val}"><strong>All Records</strong></td>'
-            table_html += f'<td><strong>{int(summary_df["No_of_Trips"].sum())}</strong></td>'
-            # Weighted averages for grand total
-            total_trips_count = summary_df["No_of_Trips"].sum()
+            total_trips_count = int(summary_df["No_of_Trips"].sum())
             weighted_s1 = (summary_df["Stage1_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_s2 = (summary_df["Stage2_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_s3 = (summary_df["Stage3_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
@@ -736,9 +699,17 @@ def render_tat_report(df_tat, filters=None):
             weighted_unload = (summary_df["Unloading_TAT"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_total = weighted_load + weighted_unload
             
-            table_html += f'<td class="loading-cell">{weighted_s1:.1f}</td>'
-            table_html += f'<td class="loading-cell">{weighted_s2:.1f}</td>'
-            table_html += f'<td class="loading-cell">{weighted_s3:.1f}</td>'
+            # Calculate colspan for label columns
+            label_colspan = 0
+            if has_client: label_colspan += 1
+            if has_plant: label_colspan += 1
+            label_colspan += 1  # For No. of Trips column
+            
+            table_html += '<tr class="grand-total-row">'
+            table_html += f'<td colspan="{label_colspan}" class="grand-total-label">GRAND TOTAL - All Records</td>'
+            table_html += f'<td class="loading-cell">{weighted_s1:.1f}<br><small>{minutes_to_hhmm(weighted_s1)}</small></td>'
+            table_html += f'<td class="loading-cell">{weighted_s2:.1f}<br><small>{minutes_to_hhmm(weighted_s2)}</small></td>'
+            table_html += f'<td class="loading-cell">{weighted_s3:.1f}<br><small>{minutes_to_hhmm(weighted_s3)}</small></td>'
             table_html += f'<td class="loading-cell"><strong>{weighted_load:.1f}</strong></td>'
             table_html += f'<td class="loading-cell">{minutes_to_hhmm(weighted_load)}</td>'
             table_html += f'<td class="unloading-cell"><strong>{weighted_unload:.1f}</strong></td>'
@@ -759,62 +730,7 @@ def render_tat_report(df_tat, filters=None):
         
         st.markdown("---")
         
-        # ── TAT DISTRIBUTION TABLES ──────────────────────────────────────────
-        st.markdown("### 📊 TAT Distribution Analysis")
-        
-        loading_dist, unloading_dist, total_dist = calculate_tat_distribution(filtered_tat_df, tat_columns)
-        
-        if not loading_dist.empty:
-            dist_tab1, dist_tab2, dist_tab3 = st.tabs(["⏱️ Loading Distribution", "⏱️ Unloading Distribution", "📊 Total TAT Distribution"])
-            
-            for tab, dist_df, title, color in [
-                (dist_tab1, loading_dist, "Loading Time Distribution (S1+S2+S3)", "Blues"),
-                (dist_tab2, unloading_dist, "Unloading Time Distribution (S4+S5)", "Greens"),
-                (dist_tab3, total_dist, "Total TAT Distribution", "Reds")
-            ]:
-                with tab:
-                    st.markdown(f"#### {title}")
-                    table_html = '<table class="dist-table"><thead><tr><th>Time Range</th><th>No. of Trips</th><th>% of Total</th><th>Avg Time (min)</th><th>Avg Time (HH:MM)</th></tr></thead><tbody>'
-                    for _, row in dist_df.iterrows():
-                        row_class = 'total-row' if row['Time Range'] == 'TOTAL' else ''
-                        table_html += f'<tr class="{row_class}"><td>{row["Time Range"]}</td><td>{row["No. of Trips"]}</td><td>{row["% of Total"]}</td><td>{row["Avg Time (min)"]}</td><td>{row["Avg Time (HH:MM)"]}</td></tr>'
-                    table_html += '</tbody></table>'
-                    st.markdown(table_html, unsafe_allow_html=True)
-                    
-                    bar_data = dist_df[dist_df['Time Range'] != 'TOTAL'].copy()
-                    bar_data['No. of Trips'] = bar_data['No. of Trips'].astype(int)
-                    fig = px.bar(bar_data, x='Time Range', y='No. of Trips', title=title,
-                                color='No. of Trips', color_continuous_scale=color, text='No. of Trips')
-                    fig.update_traces(textposition='outside')
-                    fig.update_layout(height=400, xaxis_tickangle=-45)
-                    st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("---")
-        
-        
-        # TAT Distribution Insights
-        with st.expander("📊 TAT Distribution Insights", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                pie_data = pd.DataFrame({'Phase': ['Loading (S1+S2+S3)', 'Unloading (S4+S5)'], 'Minutes': [total_loading, total_unloading]})
-                fig_pie = px.pie(pie_data, values='Minutes', names='Phase', title='TAT Distribution: Loading vs Unloading',
-                                color_discrete_sequence=['#1a73e8', '#34a853'])
-                fig_pie.update_traces(textinfo='percent+label')
-                st.plotly_chart(fig_pie, use_container_width=True)
-            with col2:
-                stage_data = pd.DataFrame({
-                    'Stage': ['S1: DO Receipt', 'S2: Gate Entry', 'S3: Loading Exit', 'S4: Unload Wait', 'S5: Unloading'],
-                    'Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5],
-                    'Phase': ['Loading', 'Loading', 'Loading', 'Unloading', 'Unloading']
-                })
-                fig_bar = px.bar(stage_data, x='Stage', y='Minutes', title='Average Time per TAT Stage',
-                                color='Phase', color_discrete_map={'Loading': '#1a73e8', 'Unloading': '#34a853'}, text='Minutes')
-                fig_bar.update_traces(texttemplate='%{text:.1f} min', textposition='outside')
-                fig_bar.update_layout(height=400, showlegend=True)
-                st.plotly_chart(fig_bar, use_container_width=True)
-        
         # Download options
-        st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
             tat_export = pd.DataFrame({
