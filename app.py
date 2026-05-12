@@ -186,6 +186,28 @@ st.markdown("""
         font-weight: 700;
         color: #d32f2f;
     }
+    
+    /* Plant Drilldown Table */
+    .drilldown-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 10px 0;
+        font-size: 0.8rem;
+    }
+    .drilldown-table th {
+        background: #4a90d9;
+        color: white;
+        padding: 8px 6px;
+        text-align: center;
+        font-weight: 600;
+        border: 1px solid #3a7bc8;
+    }
+    .drilldown-table td {
+        padding: 6px 8px;
+        text-align: center;
+        border: 1px solid #e0e0e0;
+    }
+    .drilldown-table tr:hover { background-color: #f0f4f8; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -376,6 +398,43 @@ def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
     return identified
 
 
+def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFrame:
+    """Deduplicate TAT data by Trip No, averaging stage values."""
+    if df_tat.empty or not tat_columns['trip_no_col']:
+        return df_tat
+    
+    # Create a copy to avoid modifying original
+    df = df_tat.copy()
+    
+    # Convert stage columns to numeric
+    stage_cols = ['stage1', 'stage2', 'stage3', 'stage4', 'stage5']
+    numeric_cols = []
+    for stage in stage_cols:
+        col = tat_columns[stage]
+        if col and col in df.columns:
+            df[f"_{stage}_val"] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            numeric_cols.append(f"_{stage}_val")
+    
+    # Group by Trip No and aggregate
+    trip_no_col = tat_columns['trip_no_col']
+    agg_dict = {col: 'mean' for col in numeric_cols}
+    
+    # Keep first occurrence of other columns
+    other_cols = [c for c in df.columns if c not in numeric_cols and c != trip_no_col]
+    for col in other_cols:
+        agg_dict[col] = 'first'
+    
+    deduped = df.groupby(trip_no_col, as_index=False).agg(agg_dict)
+    
+    # Rename back the stage value columns to original names for compatibility
+    for stage in stage_cols:
+        col = tat_columns[stage]
+        if col and f"_{stage}_val" in deduped.columns:
+            deduped[col] = deduped[f"_{stage}_val"]
+    
+    return deduped
+
+
 def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
     if df_tat.empty: return 0, 0, 0, 0, 0, 0, pd.DataFrame()
     df_filtered = df_tat.copy()
@@ -399,17 +458,21 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
                 df_filtered = df_filtered[(date_series >= pd.Timestamp(start_date)) & (date_series <= pd.Timestamp(end_date))]
     
     if df_filtered.empty: return 0, 0, 0, 0, 0, 0, pd.DataFrame()
-    total_records = len(df_filtered)
+    
+    # Deduplicate TAT data before calculations
+    df_deduped = deduplicate_tat_data(df_filtered, columns)
+    total_records = len(df_deduped)  # Count unique trips after dedup
+    
     averages = {}
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = columns[stage]
-        if col and col in df_filtered.columns:
-            avg_val = pd.to_numeric(df_filtered[col], errors='coerce').mean()
+        if col and col in df_deduped.columns:
+            avg_val = pd.to_numeric(df_deduped[col], errors='coerce').mean()
             averages[stage] = avg_val if not pd.isna(avg_val) else 0
         else: averages[stage] = 0
     
     return (averages["stage1"], averages["stage2"], averages["stage3"],
-            averages["stage4"], averages["stage5"], total_records, df_filtered)
+            averages["stage4"], averages["stage5"], total_records, df_deduped)
 
 
 def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
@@ -434,33 +497,37 @@ def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
     else: options['min_date'], options['max_date'] = None, None
     return options, columns
 
+
 def calculate_client_plant_tat_summary(df_tat, tat_columns):
     """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary."""
     if df_tat.empty: return pd.DataFrame()
     
+    # Deduplicate first
+    df_deduped = deduplicate_tat_data(df_tat, tat_columns)
+    
     # Calculate stages
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = tat_columns[stage]
-        if col and col in df_tat.columns:
-            df_tat[f"_{stage}_val"] = pd.to_numeric(df_tat[col], errors='coerce').fillna(0)
+        if col and col in df_deduped.columns:
+            df_deduped[f"_{stage}_val"] = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0)
         else:
-            df_tat[f"_{stage}_val"] = 0
+            df_deduped[f"_{stage}_val"] = 0
     
-    df_tat["_loading_tat"] = df_tat["_stage1_val"] + df_tat["_stage2_val"] + df_tat["_stage3_val"]
-    df_tat["_unloading_tat"] = df_tat["_stage4_val"] + df_tat["_stage5_val"]
-    df_tat["_total_tat"] = df_tat["_loading_tat"] + df_tat["_unloading_tat"]
+    df_deduped["_loading_tat"] = df_deduped["_stage1_val"] + df_deduped["_stage2_val"] + df_deduped["_stage3_val"]
+    df_deduped["_unloading_tat"] = df_deduped["_stage4_val"] + df_deduped["_stage5_val"]
+    df_deduped["_total_tat"] = df_deduped["_loading_tat"] + df_deduped["_unloading_tat"]
     
     # Determine grouping columns
     group_cols = []
-    if tat_columns['client_col'] and tat_columns['client_col'] in df_tat.columns:
+    if tat_columns['client_col'] and tat_columns['client_col'] in df_deduped.columns:
         group_cols.append(tat_columns['client_col'])
-    if tat_columns['plant_col'] and tat_columns['plant_col'] in df_tat.columns:
+    if tat_columns['plant_col'] and tat_columns['plant_col'] in df_deduped.columns:
         group_cols.append(tat_columns['plant_col'])
     
     if not group_cols:
         return pd.DataFrame()
     
-    summary = df_tat.groupby(group_cols).agg(
+    summary = df_deduped.groupby(group_cols).agg(
         No_of_Trips=("_total_tat", "count"),
         Stage1_Avg=("_stage1_val", "mean"),
         Stage2_Avg=("_stage2_val", "mean"),
@@ -486,6 +553,68 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     summary = summary.sort_values("Total_TAT")
     
     return summary
+
+
+def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None):
+    """Get detailed trip-level data for a specific plant."""
+    df = df_tat.copy()
+    
+    # Filter by plant
+    if tat_columns['plant_col'] and tat_columns['plant_col'] in df.columns:
+        df = df[df[tat_columns['plant_col']] == plant_value]
+    
+    # Filter by client if provided
+    if client_value and tat_columns['client_col'] and tat_columns['client_col'] in df.columns:
+        df = df[df[tat_columns['client_col']] == client_value]
+    
+    if df.empty:
+        return pd.DataFrame()
+    
+    # Deduplicate
+    df = deduplicate_tat_data(df, tat_columns)
+    
+    # Calculate stage values
+    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
+        col = tat_columns[stage]
+        if col and col in df.columns:
+            df[f"_{stage}_val"] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        else:
+            df[f"_{stage}_val"] = 0
+    
+    df["Loading_TAT"] = df["_stage1_val"] + df["_stage2_val"] + df["_stage3_val"]
+    df["Unloading_TAT"] = df["_stage4_val"] + df["_stage5_val"]
+    df["Total_TAT"] = df["Loading_TAT"] + df["Unloading_TAT"]
+    
+    # Build result dataframe
+    result_cols = {}
+    if tat_columns['trip_no_col']:
+        result_cols['Trip No'] = df[tat_columns['trip_no_col']]
+    if tat_columns['client_col']:
+        result_cols['Client'] = df[tat_columns['client_col']]
+    if tat_columns['destination_col']:
+        result_cols['Destination'] = df[tat_columns['destination_col']]
+    
+    result_cols.update({
+        'DO Receipt (min)': df['_stage1_val'],
+        'Gate In (min)': df['_stage2_val'],
+        'Loading Exit (min)': df['_stage3_val'],
+        'Gate In (min)': df['_stage4_val'],
+        'Unloading Exit (min)': df['_stage5_val'],
+        'Loading TAT (min)': df['Loading_TAT'],
+        'Unloading TAT (min)': df['Unloading_TAT'],
+        'Total TAT (min)': df['Total_TAT'],
+        'DO Receipt (HH:MM)': df['_stage1_val'].apply(minutes_to_hhmm),
+        'Gate In (HH:MM)': df['_stage2_val'].apply(minutes_to_hhmm),
+        'Loading Exit (HH:MM)': df['_stage3_val'].apply(minutes_to_hhmm),
+        'Gate In (HH:MM)': df['_stage4_val'].apply(minutes_to_hhmm),
+        'Unloading Exit (HH:MM)': df['_stage5_val'].apply(minutes_to_hhmm),
+        'Loading TAT (HH:MM)': df['Loading_TAT'].apply(minutes_to_hhmm),
+        'Unloading TAT (HH:MM)': df['Unloading_TAT'].apply(minutes_to_hhmm),
+        'Total TAT (HH:MM)': df['Total_TAT'].apply(minutes_to_hhmm),
+    })
+    
+    result_df = pd.DataFrame(result_cols)
+    return result_df
 
 
 def render_tat_report(df_tat, filters=None):
@@ -574,8 +703,8 @@ def render_tat_report(df_tat, filters=None):
     if tat_filters['date_range'][0] and tat_filters['date_range'][1]: active_filters.append(f"Date: **{tat_filters['date_range'][0]}** to **{tat_filters['date_range'][1]}**")
     if use_trip_filter and tat_filters['trip_nos']: active_filters.append(f"Trip Filter: **{len(tat_filters['trip_nos']):,}** trips")
     
-    if active_filters: st.info(f"🔍 **Active Filters:** {' | '.join(active_filters)} | **Records:** {total_records:,}")
-    else: st.info(f"📊 **All Records:** Showing all {total_records:,} TAT records")
+    if active_filters: st.info(f"🔍 **Active Filters:** {' | '.join(active_filters)} | **Unique Trips:** {total_records:,}")
+    else: st.info(f"📊 **All Records:** Showing all {total_records:,} unique TAT trips")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -583,7 +712,7 @@ def render_tat_report(df_tat, filters=None):
     col1, col2, col3 = st.columns(3)
     with col1: st.markdown(f'<div class="metric-card"><div class="metric-number">{minutes_to_hhmm(total_loading)}</div><div class="metric-label">⏱️ Avg Loading Time</div></div>', unsafe_allow_html=True)
     with col2: st.markdown(f'<div class="metric-card"><div class="metric-number">{minutes_to_hhmm(total_unloading)}</div><div class="metric-label">⏱️ Avg Unloading Time</div></div>', unsafe_allow_html=True)
-    with col3: st.markdown(f'<div class="metric-card"><div class="metric-number">{total_records:,}</div><div class="metric-label">📋 Total Records Analyzed</div></div>', unsafe_allow_html=True)
+    with col3: st.markdown(f'<div class="metric-card"><div class="metric-number">{total_records:,}</div><div class="metric-label">📋 Unique Trips Analyzed</div></div>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -594,9 +723,9 @@ def render_tat_report(df_tat, filters=None):
     # LOADING COLUMN
     st.markdown('<div class="tat-column"><div class="tat-column-header loading-header">⏱️ LOADING PROCESS (S1+S2+S3)</div><div class="tat-column-body">', unsafe_allow_html=True)
     for stage_name, stage_desc, avg_val in [
-        ("Stage 1: DO Receipt", "DO Receipt to Gate Entry", avg_stage1),
-        ("Stage 2: Gate Entry", "Gate Entry to Loading Bay", avg_stage2),
-        ("Stage 3: Loading & Exit", "Loading Process & Exit", avg_stage3)
+        ("DO Receipt", "DO Receipt to Gate Entry", avg_stage1),
+        ("Gate In", "Gate Entry to Loading Bay", avg_stage2),
+        ("Loading Exit", "Loading Process & Exit", avg_stage3)
     ]:
         st.markdown(f'<div class="tat-stage-row"><div class="stage-info"><div class="stage-name">{stage_name}</div><div class="stage-desc">{stage_desc}</div></div><div class="stage-time"><div class="stage-minutes">{avg_val:.2f} min</div><div class="stage-hhmm">{minutes_to_hhmm(avg_val)}</div></div></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="tat-total-row"><div class="tat-total-label">✅ Total Loading TAT</div><div class="tat-total-time"><div class="tat-total-minutes">{total_loading:.2f} min</div><div class="tat-total-hhmm">{minutes_to_hhmm(total_loading)}</div></div></div>', unsafe_allow_html=True)
@@ -605,8 +734,8 @@ def render_tat_report(df_tat, filters=None):
     # UNLOADING COLUMN
     st.markdown('<div class="tat-column"><div class="tat-column-header unloading-header">⏱️ UNLOADING PROCESS (S4+S5)</div><div class="tat-column-body">', unsafe_allow_html=True)
     for stage_name, stage_desc, avg_val in [
-        ("Stage 4: Unloading Wait", "Gate In for Unloading", avg_stage4),
-        ("Stage 5: Unloading", "Unloading Process", avg_stage5)
+        ("Gate In", "Gate In for Unloading", avg_stage4),
+        ("Unloading Exit", "Unloading Process", avg_stage5)
     ]:
         st.markdown(f'<div class="tat-stage-row"><div class="stage-info"><div class="stage-name">{stage_name}</div><div class="stage-desc">{stage_desc}</div></div><div class="stage-time"><div class="stage-minutes">{avg_val:.2f} min</div><div class="stage-hhmm">{minutes_to_hhmm(avg_val)}</div></div></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="tat-total-row"><div class="tat-total-label">✅ Total Unloading TAT</div><div class="tat-total-time"><div class="tat-total-minutes">{total_unloading:.2f} min</div><div class="tat-total-hhmm">{minutes_to_hhmm(total_unloading)}</div></div></div>', unsafe_allow_html=True)
@@ -658,14 +787,15 @@ def render_tat_report(df_tat, filters=None):
                 table_html += '<th rowspan="2" style="min-width:150px;">Plant</th>'
             table_html += '<th rowspan="2">No. of<br>Trips</th>'
             table_html += '<th colspan="5" style="background:#1a73e8;">LOADING TAT (S1+S2+S3)</th>'
-            table_html += '<th colspan="2" style="background:#34a853;">UNLOADING TAT<br>(S4+S5)</th>'
+            table_html += '<th colspan="4" style="background:#34a853;">UNLOADING TAT (S4+S5)</th>'
             table_html += '<th colspan="2" style="background:#d32f2f;">TOTAL TAT<br>(Loading+Unloading)</th>'
             table_html += '</tr>'
             
             # Header row 2
             table_html += '<tr>'
-            table_html += '<th>S1</th><th>S2</th><th>S3</th>'
+            table_html += '<th>DO Receipt</th><th>Gate In</th><th>Loading Exit</th>'
             table_html += '<th>Total Loading<br>(min)</th><th>Total Loading<br>(HH:MM)</th>'
+            table_html += '<th>Gate In</th><th>Unloading Exit</th>'
             table_html += '<th>Total Unloading<br>(min)</th><th>Total Unloading<br>(HH:MM)</th>'
             table_html += '<th>Total TAT<br>(min)</th><th>Total TAT<br>(HH:MM)</th>'
             table_html += '</tr>'
@@ -675,15 +805,19 @@ def render_tat_report(df_tat, filters=None):
             for _, row in summary_df.iterrows():
                 table_html += '<tr>'
                 if has_client: 
-                    table_html += f'<td class="client-col">{row[tat_columns["client_col"]]}</td>'
+                    client_val = row[tat_columns['client_col']]
+                    table_html += f'<td class="client-col">{client_val}</td>'
                 if has_plant: 
-                    table_html += f'<td class="plant-col">{row[tat_columns["plant_col"]]}</td>'
+                    plant_val = row[tat_columns['plant_col']]
+                    table_html += f'<td class="plant-col">{plant_val}</td>'
                 table_html += f'<td>{int(row["No_of_Trips"])}</td>'
                 table_html += f'<td class="loading-cell">{row["Stage1_Avg"]:.1f}<br><small>{row["Stage1_HHMM"]}</small></td>'
                 table_html += f'<td class="loading-cell">{row["Stage2_Avg"]:.1f}<br><small>{row["Stage2_HHMM"]}</small></td>'
                 table_html += f'<td class="loading-cell">{row["Stage3_Avg"]:.1f}<br><small>{row["Stage3_HHMM"]}</small></td>'
                 table_html += f'<td class="loading-cell"><strong>{row["Loading_TAT"]:.1f}</strong></td>'
                 table_html += f'<td class="loading-cell">{row["Loading_TAT_HHMM"]}</td>'
+                table_html += f'<td class="unloading-cell">{row["Stage4_Avg"]:.1f}<br><small>{row["Stage4_HHMM"]}</small></td>'
+                table_html += f'<td class="unloading-cell">{row["Stage5_Avg"]:.1f}<br><small>{row["Stage5_HHMM"]}</small></td>'
                 table_html += f'<td class="unloading-cell"><strong>{row["Unloading_TAT"]:.1f}</strong></td>'
                 table_html += f'<td class="unloading-cell">{row["Unloading_TAT_HHMM"]}</td>'
                 table_html += f'<td class="total-cell"><strong>{row["Total_TAT"]:.1f}</strong></td>'
@@ -695,8 +829,10 @@ def render_tat_report(df_tat, filters=None):
             weighted_s1 = (summary_df["Stage1_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_s2 = (summary_df["Stage2_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_s3 = (summary_df["Stage3_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
+            weighted_s4 = (summary_df["Stage4_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
+            weighted_s5 = (summary_df["Stage5_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_load = weighted_s1 + weighted_s2 + weighted_s3
-            weighted_unload = (summary_df["Unloading_TAT"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
+            weighted_unload = weighted_s4 + weighted_s5
             weighted_total = weighted_load + weighted_unload
             
             # Calculate colspan for label columns
@@ -712,11 +848,19 @@ def render_tat_report(df_tat, filters=None):
             table_html += f'<td class="loading-cell">{weighted_s3:.1f}<br><small>{minutes_to_hhmm(weighted_s3)}</small></td>'
             table_html += f'<td class="loading-cell"><strong>{weighted_load:.1f}</strong></td>'
             table_html += f'<td class="loading-cell">{minutes_to_hhmm(weighted_load)}</td>'
+            table_html += f'<td class="unloading-cell">{weighted_s4:.1f}<br><small>{minutes_to_hhmm(weighted_s4)}</small></td>'
+            table_html += f'<td class="unloading-cell">{weighted_s5:.1f}<br><small>{minutes_to_hhmm(weighted_s5)}</small></td>'
             table_html += f'<td class="unloading-cell"><strong>{weighted_unload:.1f}</strong></td>'
             table_html += f'<td class="unloading-cell">{minutes_to_hhmm(weighted_unload)}</td>'
             table_html += f'<td class="total-cell"><strong>{weighted_total:.1f}</strong></td>'
             table_html += f'<td class="total-cell">{minutes_to_hhmm(weighted_total)}</td>'
             table_html += '</tr>'
+            
+            # Add total trips count in the No. of Trips column
+            table_html = table_html.replace(
+                f'GRAND TOTAL - All Records</td>',
+                f'GRAND TOTAL - All Records</td><td><strong>{total_trips_count}</strong></td>'
+            )
             
             table_html += '</tbody></table>'
             st.markdown(table_html, unsafe_allow_html=True)
@@ -725,6 +869,50 @@ def render_tat_report(df_tat, filters=None):
             csv_summary = summary_df.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download Client/Plant TAT Summary (CSV)", data=csv_summary,
                              file_name="client_plant_tat_summary.csv", mime="text/csv")
+            
+            # ── PLANT-WISE DRILLDOWN ──────────────────────────────────────────
+            if has_plant:
+                st.markdown("---")
+                st.markdown("### 🔍 Plant-wise Detailed TAT Analysis")
+                
+                # Plant selection for drilldown
+                plants_in_summary = sorted(summary_df[tat_columns['plant_col']].unique().tolist())
+                selected_drill_plant = st.selectbox(
+                    "🏭 Select Plant for Detailed View",
+                    options=plants_in_summary,
+                    key="plant_drilldown_select"
+                )
+                
+                if selected_drill_plant:
+                    # Get drilldown data
+                    drilldown_df = get_plant_drilldown_data(
+                        filtered_tat_df,
+                        tat_columns,
+                        selected_drill_plant
+                    )
+                    
+                    if not drilldown_df.empty:
+                        st.markdown(f"#### 📋 Trip Details for Plant: **{selected_drill_plant}**")
+                        st.markdown(f"*Total unique trips: {len(drilldown_df)}*")
+                        
+                        # Display drilldown table
+                        st.dataframe(
+                            drilldown_df,
+                            use_container_width=True,
+                            height=400,
+                            hide_index=True
+                        )
+                        
+                        # Download drilldown data
+                        csv_drilldown = drilldown_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            f"📥 Download {selected_drill_plant} Trip Details (CSV)",
+                            data=csv_drilldown,
+                            file_name=f"plant_drilldown_{selected_drill_plant}.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.info(f"No trip details available for plant: {selected_drill_plant}")
         else:
             st.info("Client/Plant columns not available in TAT data for summary table.")
         
@@ -734,7 +922,7 @@ def render_tat_report(df_tat, filters=None):
         col1, col2 = st.columns(2)
         with col1:
             tat_export = pd.DataFrame({
-                'Stage': ['S1: DO Receipt', 'S2: Gate Entry', 'S3: Loading Exit', 'S4: Unload Wait', 'S5: Unloading',
+                'Stage': ['DO Receipt', 'Gate In', 'Loading Exit', 'Gate In', 'Unloading Exit',
                          'TOTAL LOADING TAT', 'TOTAL UNLOADING TAT', 'TOTAL TAT'],
                 'Average Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_loading, total_unloading, total_tat],
                 'Average HH:MM': [minutes_to_hhmm(v) for v in [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_loading, total_unloading, total_tat]]
