@@ -616,7 +616,6 @@ def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None
     result_df = pd.DataFrame(result_cols)
     return result_df
 
-
 def render_tat_report(df_tat, filters=None):
     st.subheader("📊 Turnaround Time (TAT) Analysis Report")
     
@@ -628,8 +627,24 @@ def render_tat_report(df_tat, filters=None):
         col1, col2, col3 = st.columns(3)
         
         with col1:
+            # Predefined client list
+            ALLOWED_CLIENTS = [
+                "ARCELORMITTAL NIPPON STEEL INDIA LIMITED",
+                "Dalmia Cement (Bharat)Limited",
+                "Hindustan Zinc Limited",
+                "Jindal Steel and Power Limited",
+                "JSW Steel Limited",
+                "TATA STEEL LIMITED CHENNAI",
+                "TATA STEEL LIMITED"
+            ]
+            
+            # Filter available clients to only include allowed ones
             if len(filter_options['clients']) > 1:
-                selected_tat_client = st.selectbox("🏢 Client", filter_options['clients'], key="tat_client_filter")
+                available_clients = [c for c in filter_options['clients'] if c in ALLOWED_CLIENTS or c == "All Clients"]
+                if not available_clients:
+                    available_clients = ["All Clients"]
+                    st.warning("⚠️ None of the specified clients found in TAT data")
+                selected_tat_client = st.selectbox("🏢 Client", available_clients, key="tat_client_filter")
             else:
                 selected_tat_client = "All Clients"
                 st.info("ℹ️ No Client column found")
@@ -910,21 +925,7 @@ def render_tat_report(df_tat, filters=None):
                         st.info(f"No trip details available for plant: {selected_drill_plant}")
         else:
             st.info("Client/Plant columns not available in TAT data for summary table.")
-        
-        st.markdown("---")
-        
-        # Download options
-        col1, col2 = st.columns(2)
-        with col1:
-            tat_export = pd.DataFrame({
-                'Stage': ['DO Receipt', 'Gate In', 'Loading Exit', 'Gate In', 'Unloading Exit',
-                         'TOTAL LOADING TAT', 'TOTAL UNLOADING TAT', 'TOTAL TAT'],
-                'Average Minutes': [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_loading, total_unloading, total_tat],
-                'Average HH:MM': [minutes_to_hhmm(v) for v in [avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_loading, total_unloading, total_tat]]
-            })
-            st.download_button("📥 Download TAT Summary (CSV)", data=tat_export.to_csv(index=False).encode('utf-8'), file_name="tat_summary_report.csv", mime="text/csv")
-        with col2:
-            st.download_button("📥 Download Filtered TAT Data (CSV)", data=filtered_tat_df.to_csv(index=False).encode('utf-8'), file_name="tat_filtered_data.csv", mime="text/csv")
+
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🚛 Monthly Trip Report Analyzer")
