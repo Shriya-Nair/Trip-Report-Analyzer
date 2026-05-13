@@ -482,62 +482,35 @@ def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
 
 
 def calculate_client_plant_tat_summary(df_tat, tat_columns):
-    """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary."""
     if df_tat.empty: return pd.DataFrame()
     
-    # Deduplicate first
-    df_deduped = deduplicate_tat_data(df_tat, tat_columns)
+    # 1. Standardize the data types and names immediately
+    df = df_tat.copy()
+    for col in [tat_columns['client_col'], tat_columns['plant_col']]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.upper().str.strip()
+
+    # 2. Re-run deduplication on the standardized data
+    df_deduped = deduplicate_tat_data(df, tat_columns)
     
-    if df_deduped.empty: return pd.DataFrame()
-    
-    # Calculate stage values
+    # 3. Ensure stage columns are strictly numeric
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = tat_columns[stage]
         if col and col in df_deduped.columns:
             df_deduped[f"_{stage}_val"] = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0)
-        else:
-            df_deduped[f"_{stage}_val"] = 0
     
-    df_deduped["_loading_tat"] = df_deduped["_stage1_val"] + df_deduped["_stage2_val"] + df_deduped["_stage3_val"]
-    df_deduped["_unloading_tat"] = df_deduped["_stage4_val"] + df_deduped["_stage5_val"]
-    df_deduped["_total_tat"] = df_deduped["_loading_tat"] + df_deduped["_unloading_tat"]
-    
-    # Determine grouping columns
-    group_cols = []
-    if tat_columns['client_col'] and tat_columns['client_col'] in df_deduped.columns:
-        group_cols.append(tat_columns['client_col'])
-    if tat_columns['plant_col'] and tat_columns['plant_col'] in df_deduped.columns:
-        group_cols.append(tat_columns['plant_col'])
-    
-    if not group_cols:
-        return pd.DataFrame()
-    
-    # Group by and aggregate
-    summary = df_deduped.groupby(group_cols, as_index=False).agg(
-        No_of_Trips=("_total_tat", "count"),
-        Stage1_Avg=("_stage1_val", "mean"),
-        Stage2_Avg=("_stage2_val", "mean"),
-        Stage3_Avg=("_stage3_val", "mean"),
-        Stage4_Avg=("_stage4_val", "mean"),
-        Stage5_Avg=("_stage5_val", "mean"),
-        Loading_TAT=("_loading_tat", "mean"),
-        Unloading_TAT=("_unloading_tat", "mean"),
-        Total_TAT=("_total_tat", "mean"),
-    )
-    
-    # Add HH:MM columns
-    summary["Stage1_HHMM"] = summary["Stage1_Avg"].apply(minutes_to_hhmm)
-    summary["Stage2_HHMM"] = summary["Stage2_Avg"].apply(minutes_to_hhmm)
-    summary["Stage3_HHMM"] = summary["Stage3_Avg"].apply(minutes_to_hhmm)
-    summary["Stage4_HHMM"] = summary["Stage4_Avg"].apply(minutes_to_hhmm)
-    summary["Stage5_HHMM"] = summary["Stage5_Avg"].apply(minutes_to_hhmm)
-    summary["Loading_TAT_HHMM"] = summary["Loading_TAT"].apply(minutes_to_hhmm)
-    summary["Unloading_TAT_HHMM"] = summary["Unloading_TAT"].apply(minutes_to_hhmm)
-    summary["Total_TAT_HHMM"] = summary["Total_TAT"].apply(minutes_to_hhmm)
-    
-    summary = summary.sort_values("Total_TAT")
-    
-    return summary
+    # ... (rest of your TAT addition logic) ...
+
+    # 4. Grouping - ensure we use the standardized columns
+    summary = df_deduped.groupby(group_cols, as_index=False).agg({
+        "No_of_Trips": ("count"), # Changed from "count" on a specific column to avoid issues
+        "_loading_tat": "mean",
+        "_unloading_tat": "mean",
+        "_total_tat": "mean",
+        # Include means for each stage for the table
+        "_stage1_val": "mean", "_stage2_val": "mean", "_stage3_val": "mean",
+        "_stage4_val": "mean", "_stage5_val": "mean"
+    })
 
 
 def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None):
@@ -909,7 +882,7 @@ def render_tat_report(df_tat, filters=None):
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.title("🚛 Monthly Trip Report Analyzer")
+st.title("🚛 Trip Report and TAT Report Analyzer")
 st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination.")
 st.divider()
 
