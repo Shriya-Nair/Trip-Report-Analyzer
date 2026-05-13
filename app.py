@@ -616,7 +616,8 @@ def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None
     result_df = pd.DataFrame(result_cols)
     return result_df
 
-def render_tat_report(df_tat, filters=None):
+
+    def render_tat_report(df_tat, filters=None):
     st.subheader("📊 Turnaround Time (TAT) Analysis Report")
     
     filter_options, tat_columns = get_tat_filter_options(df_tat)
@@ -638,7 +639,7 @@ def render_tat_report(df_tat, filters=None):
                 "TATA STEEL LIMITED"
             ]
             
-            # Filter available clients to only include allowed ones
+            # Client selection
             if len(filter_options['clients']) > 1:
                 available_clients = [c for c in filter_options['clients'] if c in ALLOWED_CLIENTS or c == "All Clients"]
                 if not available_clients:
@@ -648,27 +649,70 @@ def render_tat_report(df_tat, filters=None):
             else:
                 selected_tat_client = "All Clients"
                 st.info("ℹ️ No Client column found")
-            
-            if len(filter_options['destinations']) > 1:
-                enable_multi_dest = st.checkbox("📍 Multi-Destination", value=False, key="tat_multi_dest_checkbox")
-                if enable_multi_dest:
-                    selected_tat_destinations = st.multiselect("Select Destinations", options=filter_options['destinations'][1:], default=[], key="tat_destination_multiselect")
-                    selected_tat_destination = None if selected_tat_destinations else "All Destinations"
-                else:
-                    selected_tat_destination = st.selectbox("📍 Destination", filter_options['destinations'], key="tat_destination_filter")
-                    selected_tat_destinations = None
-            else:
-                selected_tat_destination = "All Destinations"
-                selected_tat_destinations = None
-                st.info("ℹ️ No Destination column found")
         
         with col2:
-            if len(filter_options['plants']) > 1:
-                selected_tat_plant = st.selectbox("🏭 Plant/Source", filter_options['plants'], key="tat_plant_filter")
+            # DYNAMIC PLANT FILTER - Filter plants based on selected client
+            if len(filter_options['plants']) > 1 and tat_columns['plant_col']:
+                # Build filtered dataframe based on current selections
+                temp_df = df_tat.copy()
+                
+                # Filter by client if selected
+                if selected_tat_client != "All Clients" and tat_columns['client_col']:
+                    temp_df = temp_df[temp_df[tat_columns['client_col']] == selected_tat_client]
+                
+                # Get plants for filtered data
+                filtered_plants = sorted(temp_df[tat_columns['plant_col']].dropna().unique().tolist())
+                plant_options = ["All Plants"] + filtered_plants if filtered_plants else ["All Plants"]
+                
+                # Reset plant selection if current plant not in new options
+                current_plant_key = "tat_plant_filter"
+                if current_plant_key in st.session_state:
+                    if st.session_state[current_plant_key] not in plant_options:
+                        st.session_state[current_plant_key] = "All Plants"
+                
+                selected_tat_plant = st.selectbox("🏭 Plant/Source", plant_options, key=current_plant_key)
             else:
                 selected_tat_plant = "All Plants"
                 st.info("ℹ️ No Plant column found")
-            
+        
+        with col3:
+            # DYNAMIC DESTINATION FILTER - Filter destinations based on selected client and plant
+            if len(filter_options['destinations']) > 1 and tat_columns['destination_col']:
+                # Build filtered dataframe based on current selections
+                temp_df = df_tat.copy()
+                
+                # Filter by client if selected
+                if selected_tat_client != "All Clients" and tat_columns['client_col']:
+                    temp_df = temp_df[temp_df[tat_columns['client_col']] == selected_tat_client]
+                
+                # Filter by plant if selected
+                if selected_tat_plant != "All Plants" and tat_columns['plant_col']:
+                    temp_df = temp_df[temp_df[tat_columns['plant_col']] == selected_tat_plant]
+                
+                # Get destinations for filtered data
+                filtered_destinations = sorted(temp_df[tat_columns['destination_col']].dropna().unique().tolist())
+                destination_options = ["All Destinations"] + filtered_destinations if filtered_destinations else ["All Destinations"]
+                
+                # Reset destination selection if current destination not in new options
+                current_dest_key = "tat_destination_filter"
+                if current_dest_key in st.session_state:
+                    if st.session_state[current_dest_key] not in destination_options:
+                        st.session_state[current_dest_key] = "All Destinations"
+                
+                selected_tat_destination = st.selectbox("📍 Destination", destination_options, key=current_dest_key)
+                selected_tat_destinations = None
+                enable_multi_dest = False
+            else:
+                selected_tat_destination = "All Destinations"
+                selected_tat_destinations = None
+                enable_multi_dest = False
+                st.info("ℹ️ No Destination column found")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Date range and trip filter in a new row
+        col1, col2, col3 = st.columns(3)
+        with col1:
             if filter_options['min_date'] and filter_options['max_date']:
                 date_range = st.date_input("📅 Date Range", value=(filter_options['min_date'], filter_options['max_date']),
                                           min_value=filter_options['min_date'], max_value=filter_options['max_date'], key="tat_date_filter")
@@ -677,21 +721,30 @@ def render_tat_report(df_tat, filters=None):
                 start_date, end_date = None, None
                 st.info("ℹ️ No Date column found")
         
-        with col3:
-            st.markdown("<br>", unsafe_allow_html=True)
+        with col2:
             use_trip_filter = st.checkbox("🔗 Filter by Trip Analysis selection",
                                          value=(filters is not None and filters.get('trip_nos') is not None), key="tat_trip_filter_checkbox")
         
-        col1, col2, col3 = st.columns([1, 1, 2])
-        with col1:
-            if st.button("🗑️ Clear TAT Filters", key="clear_tat_filters"):
+        with col3:
+            if st.button("🗑️ Clear TAT Filters", use_container_width=True, key="clear_tat_filters"):
                 for key in ["tat_client_filter", "tat_plant_filter", "tat_destination_filter",
                            "tat_trip_filter_checkbox", "tat_multi_dest_checkbox"]:
                     if key in st.session_state: del st.session_state[key]
                 st.rerun()
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("---")
+    
+    # Build filter dictionary
+    tat_filters = {
+        'client': selected_tat_client if 'selected_tat_client' in locals() else "All Clients",
+        'plant': selected_tat_plant if 'selected_tat_plant' in locals() else "All Plants",
+        'destination': selected_tat_destination if 'selected_tat_destination' in locals() and selected_tat_destination != "All Destinations" else "All Destinations",
+        'date_range': (start_date, end_date) if 'start_date' in locals() else (None, None),
+        'trip_nos': filters.get('trip_nos') if use_trip_filter and filters else None,
+        'multi_destinations': None
+    }
     
     # Build filter dictionary
     tat_filters = {
