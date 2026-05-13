@@ -864,7 +864,35 @@ def render_tat_report(df_tat, filters=None):
     </div>
     ''', unsafe_allow_html=True)
     
-    if total_tat > 0 and not filtered_tat_df.empty:
+        if total_tat > 0 and not filtered_tat_df.empty:
+        st.markdown("---")
+        
+        # ── DEBUG: Show what data we have ────────────────────────────────────
+        with st.expander("🔍 Debug Info - Check Missing Plants", expanded=False):
+            st.write("**Filtered TAT Data (Deduplicated):**")
+            st.write(f"Total unique trips: {len(filtered_tat_df)}")
+            
+            if tat_columns['client_col'] and tat_columns['client_col'] in filtered_tat_df.columns:
+                st.write("**Clients in filtered data:**")
+                st.write(filtered_tat_df[tat_columns['client_col']].value_counts())
+            
+            if tat_columns['plant_col'] and tat_columns['plant_col'] in filtered_tat_df.columns:
+                st.write("**Plants in filtered data:**")
+                plant_counts = filtered_tat_df[tat_columns['plant_col']].value_counts()
+                st.write(plant_counts)
+                st.write(f"Total unique plants: {len(plant_counts)}")
+            
+            # Also check the original df_tat for the missing plant
+            if tat_columns['plant_col'] and tat_columns['client_col']:
+                st.write("**ALL plants in original TAT data for selected client:**")
+                if selected_tat_client != "All Clients":
+                    client_data = df_tat[df_tat[tat_columns['client_col']] == selected_tat_client]
+                else:
+                    client_data = df_tat
+                all_client_plants = client_data[tat_columns['plant_col']].value_counts()
+                st.write(all_client_plants)
+                st.write(f"Total plants in original data for client: {len(all_client_plants)}")
+        
         st.markdown("---")
         
         # ── CLIENT | PLANT | TAT SUMMARY TABLE ───────────────────────────────
