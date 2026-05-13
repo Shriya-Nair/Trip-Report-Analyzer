@@ -374,14 +374,20 @@ def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
 
 
 def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFrame:
-    """Deduplicate TAT data by Trip No, averaging stage values."""
+    """Deduplicate TAT data by Trip No AND Plant, averaging stage values."""
     if df_tat.empty or not tat_columns['trip_no_col']:
         return df_tat
     
     df = df_tat.copy()
     trip_no_col = tat_columns['trip_no_col']
+    plant_col = tat_columns['plant_col']
     
-    # Convert stage columns to numeric
+    # Build group columns - Trip No + Plant for safety
+    group_cols = [trip_no_col]
+    if plant_col and plant_col in df.columns:
+        group_cols.append(plant_col)
+    
+    # Convert stage columns to numeric with fillna(0)
     stage_cols = ['stage1', 'stage2', 'stage3', 'stage4', 'stage5']
     numeric_cols = []
     for stage in stage_cols:
@@ -393,14 +399,14 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     if not numeric_cols:
         return df_tat
     
-    # Build aggregation: average for numeric, first for others
+    # Build aggregation: mean for numeric, first for others
     agg_dict = {col: 'mean' for col in numeric_cols}
-    other_cols = [c for c in df.columns if c not in numeric_cols and c != trip_no_col]
+    other_cols = [c for c in df.columns if c not in numeric_cols and c not in group_cols]
     for col in other_cols:
         agg_dict[col] = 'first'
     
-    # Group by both Trip No AND Plant so a trip at a different plant isn't deleted
-    deduped = df.groupby([trip_no_col, tat_columns['plant_col']], as_index=False).agg(agg_dict)
+    # Group by Trip No + Plant
+    deduped = df.groupby(group_cols, as_index=False).agg(agg_dict)
     
     # Restore original column names for stages
     for stage in stage_cols:
@@ -423,6 +429,7 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
             df_filtered = df_filtered[df_filtered[columns['trip_no_col']].isin(filters['trip_nos'])]
         if filters.get('client') and filters['client'] != "All Clients" and columns['client_col']:
             df_filtered = df_filtered[df_filtered[columns['client_col']] == filters['client']]
+        # FIX: Only apply plant filter if NOT "All Plants"
         if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
             df_filtered = df_filtered[df_filtered[columns['plant_col']] == filters['plant']]
         if filters.get('destination') and filters['destination'] != "All Destinations" and columns['destination_col']:
@@ -449,7 +456,7 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = columns[stage]
         if col and col in df_deduped.columns:
-            avg_val = pd.to_numeric(df_deduped[col], errors='coerce').mean()
+            avg_val = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0).mean()
             averages[stage] = avg_val if not pd.isna(avg_val) else 0
         else:
             averages[stage] = 0
@@ -482,35 +489,62 @@ def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
 
 
 def calculate_client_plant_tat_summary(df_tat, tat_columns):
+    """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary."""
     if df_tat.empty: return pd.DataFrame()
     
-    # 1. Standardize the data types and names immediately
-    df = df_tat.copy()
-    for col in [tat_columns['client_col'], tat_columns['plant_col']]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.upper().str.strip()
-
-    # 2. Re-run deduplication on the standardized data
-    df_deduped = deduplicate_tat_data(df, tat_columns)
+    # Deduplicate first
+    df_deduped = deduplicate_tat_data(df_tat, tat_columns)
     
-    # 3. Ensure stage columns are strictly numeric
+    if df_deduped.empty: return pd.DataFrame()
+    
+    # Calculate stage values with fillna(0)
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = tat_columns[stage]
         if col and col in df_deduped.columns:
             df_deduped[f"_{stage}_val"] = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0)
+        else:
+            df_deduped[f"_{stage}_val"] = 0
     
-    # ... (rest of your TAT addition logic) ...
-
-    # 4. Grouping - ensure we use the standardized columns
-    summary = df_deduped.groupby(group_cols, as_index=False).agg({
-        "No_of_Trips": ("count"), # Changed from "count" on a specific column to avoid issues
-        "_loading_tat": "mean",
-        "_unloading_tat": "mean",
-        "_total_tat": "mean",
-        # Include means for each stage for the table
-        "_stage1_val": "mean", "_stage2_val": "mean", "_stage3_val": "mean",
-        "_stage4_val": "mean", "_stage5_val": "mean"
-    })
+    df_deduped["_loading_tat"] = df_deduped["_stage1_val"] + df_deduped["_stage2_val"] + df_deduped["_stage3_val"]
+    df_deduped["_unloading_tat"] = df_deduped["_stage4_val"] + df_deduped["_stage5_val"]
+    df_deduped["_total_tat"] = df_deduped["_loading_tat"] + df_deduped["_unloading_tat"]
+    
+    # Determine grouping columns
+    group_cols = []
+    if tat_columns['client_col'] and tat_columns['client_col'] in df_deduped.columns:
+        group_cols.append(tat_columns['client_col'])
+    if tat_columns['plant_col'] and tat_columns['plant_col'] in df_deduped.columns:
+        group_cols.append(tat_columns['plant_col'])
+    
+    if not group_cols:
+        return pd.DataFrame()
+    
+    # Group by and aggregate using mean for all stages
+    summary = df_deduped.groupby(group_cols, as_index=False).agg(
+        No_of_Trips=("_total_tat", "count"),
+        Stage1_Avg=("_stage1_val", "mean"),
+        Stage2_Avg=("_stage2_val", "mean"),
+        Stage3_Avg=("_stage3_val", "mean"),
+        Stage4_Avg=("_stage4_val", "mean"),
+        Stage5_Avg=("_stage5_val", "mean"),
+        Loading_TAT=("_loading_tat", "mean"),
+        Unloading_TAT=("_unloading_tat", "mean"),
+        Total_TAT=("_total_tat", "mean"),
+    )
+    
+    # Add HH:MM columns
+    summary["Stage1_HHMM"] = summary["Stage1_Avg"].apply(minutes_to_hhmm)
+    summary["Stage2_HHMM"] = summary["Stage2_Avg"].apply(minutes_to_hhmm)
+    summary["Stage3_HHMM"] = summary["Stage3_Avg"].apply(minutes_to_hhmm)
+    summary["Stage4_HHMM"] = summary["Stage4_Avg"].apply(minutes_to_hhmm)
+    summary["Stage5_HHMM"] = summary["Stage5_Avg"].apply(minutes_to_hhmm)
+    summary["Loading_TAT_HHMM"] = summary["Loading_TAT"].apply(minutes_to_hhmm)
+    summary["Unloading_TAT_HHMM"] = summary["Unloading_TAT"].apply(minutes_to_hhmm)
+    summary["Total_TAT_HHMM"] = summary["Total_TAT"].apply(minutes_to_hhmm)
+    
+    summary = summary.sort_values("Total_TAT")
+    
+    return summary
 
 
 def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None):
@@ -574,19 +608,19 @@ def render_tat_report(df_tat, filters=None):
     
     filter_options, tat_columns = get_tat_filter_options(df_tat)
     
-    # Clean up names
-    if tat_columns['client_col'] and tat_columns['client_col'] in df_tat.columns:
-        df_tat[tat_columns['client_col']] = df_tat[tat_columns['client_col']].str.strip()
+    # ── CRITICAL FIX: Standardize names ──────────────────────────────────────
     if tat_columns['plant_col'] and tat_columns['plant_col'] in df_tat.columns:
-        df_tat[tat_columns['plant_col']] = df_tat[tat_columns['plant_col']].str.strip()
+        df_tat[tat_columns['plant_col']] = df_tat[tat_columns['plant_col']].astype(str).str.upper().str.strip()
+    if tat_columns['client_col'] and tat_columns['client_col'] in df_tat.columns:
+        df_tat[tat_columns['client_col']] = df_tat[tat_columns['client_col']].astype(str).str.upper().str.strip()
     
-    # Predefined client list
+    # Predefined client list (UPPERCASE for matching)
     ALLOWED_CLIENTS = [
         "ARCELORMITTAL NIPPON STEEL INDIA LIMITED",
-        "Dalmia Cement (Bharat)Limited",
-        "Hindustan Zinc Limited",
-        "Jindal Steel and Power Limited",
-        "JSW Steel Limited",
+        "DALMIA CEMENT (BHARAT)LIMITED",
+        "HINDUSTAN ZINC LIMITED",
+        "JINDAL STEEL AND POWER LIMITED",
+        "JSW STEEL LIMITED",
         "TATA STEEL LIMITED CHENNAI",
         "TATA STEEL LIMITED"
     ]
@@ -599,7 +633,7 @@ def render_tat_report(df_tat, filters=None):
     if all_clients_in_data:
         for allowed_client in ALLOWED_CLIENTS:
             for actual_client in all_clients_in_data:
-                if allowed_client.upper().strip() == actual_client.upper().strip():
+                if allowed_client == actual_client:
                     available_clients.append(allowed_client)
                     client_mapping[allowed_client] = actual_client
                     break
@@ -616,7 +650,6 @@ def render_tat_report(df_tat, filters=None):
                 selected_tat_client = "All Clients"
                 st.warning("⚠️ None of the specified clients found in TAT data")
         
-        # Get actual client name
         actual_client_name = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
         
         with col2:
@@ -672,7 +705,6 @@ def render_tat_report(df_tat, filters=None):
     
     st.markdown("---")
     
-    # Build filter dictionary
     tat_filters = {
         'client': actual_client_name,
         'plant': selected_tat_plant,
@@ -687,7 +719,6 @@ def render_tat_report(df_tat, filters=None):
     total_unloading = avg_stage4 + avg_stage5
     total_tat = total_loading + total_unloading
     
-    # Active filters display
     active_filters = []
     if tat_filters['client'] != "All Clients": active_filters.append(f"Client: **{selected_tat_client}**")
     if tat_filters['plant'] != "All Plants": active_filters.append(f"Plant: **{tat_filters['plant']}**")
@@ -700,7 +731,6 @@ def render_tat_report(df_tat, filters=None):
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # KPI Cards
     col1, col2, col3 = st.columns(3)
     with col1: st.markdown(f'<div class="metric-card"><div class="metric-number">{minutes_to_hhmm(total_loading)}</div><div class="metric-label">⏱️ Avg Loading Time</div></div>', unsafe_allow_html=True)
     with col2: st.markdown(f'<div class="metric-card"><div class="metric-number">{minutes_to_hhmm(total_unloading)}</div><div class="metric-label">⏱️ Avg Unloading Time</div></div>', unsafe_allow_html=True)
@@ -708,11 +738,9 @@ def render_tat_report(df_tat, filters=None):
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Two-Column TAT Breakdown
     st.markdown("### 📈 Detailed TAT Breakdown")
     st.markdown('<div class="tat-container">', unsafe_allow_html=True)
     
-    # Loading Column
     st.markdown('<div class="tat-column"><div class="tat-column-header loading-header">⏱️ LOADING PROCESS (S1+S2+S3)</div><div class="tat-column-body">', unsafe_allow_html=True)
     for stage_name, stage_desc, avg_val in [
         ("DO Receipt", "DO Receipt to Gate Entry", avg_stage1),
@@ -723,7 +751,6 @@ def render_tat_report(df_tat, filters=None):
     st.markdown(f'<div class="tat-total-row"><div class="tat-total-label">✅ Total Loading TAT</div><div class="tat-total-time"><div class="tat-total-minutes">{total_loading:.2f} min</div><div class="tat-total-hhmm">{minutes_to_hhmm(total_loading)}</div></div></div>', unsafe_allow_html=True)
     st.markdown('</div></div>', unsafe_allow_html=True)
     
-    # Unloading Column
     st.markdown('<div class="tat-column"><div class="tat-column-header unloading-header">⏱️ UNLOADING PROCESS (S4+S5)</div><div class="tat-column-body">', unsafe_allow_html=True)
     for stage_name, stage_desc, avg_val in [
         ("Gate In", "Gate In for Unloading", avg_stage4),
@@ -734,7 +761,6 @@ def render_tat_report(df_tat, filters=None):
     st.markdown('</div></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Grand Total
     loading_hhmm = minutes_to_hhmm(total_loading)
     unloading_hhmm = minutes_to_hhmm(total_unloading)
     total_hhmm = minutes_to_hhmm(total_tat)
@@ -807,7 +833,6 @@ def render_tat_report(df_tat, filters=None):
                 table_html += f'<td class="total-cell">{row["Total_TAT_HHMM"]}</td>'
                 table_html += '</tr>'
             
-            # Grand Total row
             total_trips_count = int(summary_df["No_of_Trips"].sum())
             weighted_s1 = (summary_df["Stage1_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_s2 = (summary_df["Stage2_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
@@ -845,7 +870,6 @@ def render_tat_report(df_tat, filters=None):
             st.download_button("📥 Download Client/Plant TAT Summary (CSV)", data=csv_summary,
                              file_name="client_plant_tat_summary.csv", mime="text/csv")
             
-            # Plant-wise Drilldown
             if has_plant:
                 st.markdown("---")
                 st.markdown("### 🔍 Plant-wise Detailed TAT Analysis")
@@ -886,7 +910,6 @@ st.title("🚛 Trip Report and TAT Report Analyzer")
 st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination.")
 st.divider()
 
-# ── File Upload Section ──────────────────────────────────────────────────────
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("### 📂 Trip Reports")
