@@ -654,6 +654,10 @@ def render_tat_report(df_tat, filters=None):
     if tat_columns['client_col'] and tat_columns['client_col'] in df_tat.columns:
         df_tat[tat_columns['client_col']] = df_tat[tat_columns['client_col']].str.strip()
     
+    # Clean up plant names too
+    if tat_columns['plant_col'] and tat_columns['plant_col'] in df_tat.columns:
+        df_tat[tat_columns['plant_col']] = df_tat[tat_columns['plant_col']].str.strip()
+    
     # ── TAT Filters ──────────────────────────────────────────────────────────
     with st.expander("🔍 TAT Data Filters", expanded=True):
         st.markdown('<div class="filter-section">', unsafe_allow_html=True)
@@ -692,14 +696,14 @@ def render_tat_report(df_tat, filters=None):
                 selected_tat_client = "All Clients"
                 st.warning("⚠️ None of the specified clients found in TAT data")
         
+        # Get actual client name from mapping
+        actual_client_name = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
+        
         with col2:
             # DYNAMIC PLANT FILTER - Filter plants based on selected client
             if tat_columns['plant_col'] and len(filter_options['plants']) >= 1:
                 # Build filtered dataframe based on current selections
                 temp_df = df_tat.copy()
-                
-                # Get actual client name from mapping
-                actual_client_name = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
                 
                 # Filter by client if selected
                 if actual_client_name != "All Clients" and tat_columns['client_col']:
@@ -725,9 +729,6 @@ def render_tat_report(df_tat, filters=None):
             if tat_columns['destination_col'] and len(filter_options['destinations']) >= 1:
                 # Build filtered dataframe based on current selections
                 temp_df = df_tat.copy()
-                
-                # Get actual client name from mapping
-                actual_client_name = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
                 
                 # Filter by client if selected
                 if actual_client_name != "All Clients" and tat_columns['client_col']:
@@ -793,7 +794,32 @@ def render_tat_report(df_tat, filters=None):
         'multi_destinations': None
     }
     
+    # DEBUG: Check what data is being passed to process_tat_data
+    with st.expander("🔍 DEBUG: Data Flow Check", expanded=False):
+        st.write("**Filters being applied:**")
+        st.write(tat_filters)
+        
+        # Check original data
+        if tat_columns['client_col']:
+            st.write(f"**Original TAT data rows:** {len(df_tat)}")
+            if actual_client_for_filter != "All Clients":
+                client_data = df_tat[df_tat[tat_columns['client_col']] == actual_client_for_filter]
+                st.write(f"**Rows for client '{actual_client_for_filter}':** {len(client_data)}")
+                if tat_columns['plant_col']:
+                    plant_counts = client_data[tat_columns['plant_col']].value_counts()
+                    st.write("**Plant distribution for this client:**")
+                    st.write(plant_counts)
+    
     avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_tat_df = process_tat_data(df_tat, tat_filters)
+    
+    # DEBUG: Check filtered results
+    with st.expander("🔍 DEBUG: After Filtering", expanded=False):
+        st.write(f"**Total unique trips after filtering:** {total_records}")
+        if not filtered_tat_df.empty and tat_columns['plant_col']:
+            plant_counts_filtered = filtered_tat_df[tat_columns['plant_col']].value_counts()
+            st.write("**Plant distribution in filtered data:**")
+            st.write(plant_counts_filtered)
+            st.write(f"**Number of unique plants in filtered data:** {len(plant_counts_filtered)}")
     
     total_loading = avg_stage1 + avg_stage2 + avg_stage3
     total_unloading = avg_stage4 + avg_stage5
@@ -874,6 +900,15 @@ def render_tat_report(df_tat, filters=None):
         st.markdown("**LOADING TAT (S1+S2+S3) | UNLOADING TAT (S4+S5) | TOTAL TAT (Loading + Unloading)**")
         
         summary_df = calculate_client_plant_tat_summary(filtered_tat_df, tat_columns)
+        
+        # DEBUG: Check summary dataframe
+        with st.expander("🔍 DEBUG: Summary DataFrame", expanded=False):
+            st.write(f"**Summary shape:** {summary_df.shape}")
+            st.write("**Summary dataframe:**")
+            st.dataframe(summary_df)
+            if tat_columns['plant_col'] and tat_columns['plant_col'] in summary_df.columns:
+                st.write("**Plants in summary:**")
+                st.write(summary_df[tat_columns['plant_col']].tolist())
         
         if not summary_df.empty:
             # Determine columns present
