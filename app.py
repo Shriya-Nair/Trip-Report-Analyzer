@@ -864,7 +864,7 @@ def render_tat_report(df_tat, filters=None):
     </div>
     ''', unsafe_allow_html=True)
     
-        if total_tat > 0 and not filtered_tat_df.empty:
+    if total_tat > 0 and not filtered_tat_df.empty:
         st.markdown("---")
         
         # ── DEBUG: Show what data we have ────────────────────────────────────
