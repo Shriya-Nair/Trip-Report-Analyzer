@@ -438,9 +438,9 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
         
         # FIX B: Defensive client matching using contains
         if filters.get('client') and filters['client'] != "All Clients" and columns['client_col']:
-            client_val = str(filters['client']).strip().upper()
-            mask = df_filtered[columns['client_col']].astype(str).str.upper().str.contains(client_val, na=False)
-            df_filtered = df_filtered[mask]
+            # Get the list of actual names from the mapping
+            actual_names = filters['client'] if isinstance(filters['client'], list) else [filters['client']]
+            df_filtered = df_filtered[df_filtered[columns['client_col']].isin(actual_names)]
         
         if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
             df_filtered = df_filtered[df_filtered[columns['plant_col']] == filters['plant']]
@@ -646,16 +646,16 @@ def render_tat_report(df_tat, filters=None):
     
     # Find matching clients using CONTAINS for flexibility
     all_clients_in_data = sorted(df_tat[tat_columns['client_col']].dropna().unique().tolist()) if tat_columns['client_col'] else []
-    available_clients = ["All Clients"]
     client_mapping = {}
+    available_clients = ["All Clients"]
     
     if all_clients_in_data:
         for allowed_client in ALLOWED_CLIENTS:
-            for actual_client in all_clients_in_data:
-                if allowed_client in actual_client or actual_client in allowed_client:
-                    available_clients.append(allowed_client)
-                    client_mapping[allowed_client] = actual_client
-                    break
+            # Find every name in data that matches this allowed client
+            matches = [act for act in all_clients_in_data if allowed_client in act or act in allowed_client]
+            if matches:
+                available_clients.append(allowed_client)
+                client_mapping[allowed_client] = matches 
     
     # ── TAT Filters ──────────────────────────────────────────────────────────
     with st.expander("🔍 TAT Data Filters", expanded=True):
@@ -929,7 +929,7 @@ def render_tat_report(df_tat, filters=None):
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.title("🚛 Monthly Trip Report Analyzer")
+st.title("🚛 Trip Report and TAT Report Analyzer")
 st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination.")
 st.divider()
 
