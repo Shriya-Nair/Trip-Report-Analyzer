@@ -418,7 +418,7 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     # Group by Trip No and aggregate
     trip_no_col = tat_columns['trip_no_col']
     
-    # FIX: Handle case where trip_no_col might have NaN values
+    # Handle case where trip_no_col might have NaN values
     df = df.dropna(subset=[trip_no_col])
     
     if df.empty:
@@ -436,8 +436,6 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     try:
         deduped = df.groupby(trip_no_col, as_index=False).agg(agg_dict)
     except Exception as e:
-        # If aggregation fails, return original
-        print(f"Dedup aggregation failed: {e}")
         return df_tat
     
     # Rename back the stage value columns to original names for compatibility
@@ -471,14 +469,12 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
                 date_series = pd.to_datetime(df_filtered[columns['date_col']], errors='coerce')
                 df_filtered = df_filtered[(date_series >= pd.Timestamp(start_date)) & (date_series <= pd.Timestamp(end_date))]
     
-    # FIX: Don't return empty if we have data
     if df_filtered.empty: 
         return 0, 0, 0, 0, 0, 0, pd.DataFrame()
     
     # Deduplicate TAT data before calculations
     df_deduped = deduplicate_tat_data(df_filtered, columns)
     
-    # FIX: Check if deduped is empty
     if df_deduped.empty:
         return 0, 0, 0, 0, 0, 0, pd.DataFrame()
     
@@ -495,6 +491,7 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
     
     return (averages["stage1"], averages["stage2"], averages["stage3"],
             averages["stage4"], averages["stage5"], total_records, df_deduped)
+
 
 def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
     columns = identify_tat_columns(df_tat)
@@ -523,13 +520,12 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary."""
     if df_tat.empty: return pd.DataFrame()
     
-    # Deduplicate first - KEEP THIS but make sure it preserves all unique trips
+    # Deduplicate first
     df_deduped = deduplicate_tat_data(df_tat, tat_columns)
     
-    # If after dedup we have no data, return empty
     if df_deduped.empty: return pd.DataFrame()
     
-    # Calculate stages - ensure we handle single values correctly
+    # Calculate stages
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = tat_columns[stage]
         if col and col in df_deduped.columns:
@@ -551,11 +547,10 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     if not group_cols:
         return pd.DataFrame()
     
-    # Check if we have enough data to group
     if len(df_deduped) == 0:
         return pd.DataFrame()
     
-    # Group by and aggregate - FIX: Handle single rows properly
+    # Group by and aggregate
     try:
         summary = df_deduped.groupby(group_cols, as_index=False).agg(
             No_of_Trips=("_total_tat", "count"),
@@ -569,8 +564,6 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
             Total_TAT=("_total_tat", "mean"),
         )
     except Exception as e:
-        # If groupby fails, try manual calculation
-        st.warning(f"Groupby failed: {e}. Using manual calculation.")
         return pd.DataFrame()
     
     # Add HH:MM columns
@@ -628,19 +621,20 @@ def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None
     if tat_columns['destination_col']:
         result_cols['Destination'] = df[tat_columns['destination_col']]
     
+    # Use unique column names for the two Gate In stages
     result_cols.update({
         'DO Receipt (min)': df['_stage1_val'],
-        'Gate In (min)': df['_stage2_val'],
+        'Gate In - Loading (min)': df['_stage2_val'],
         'Loading Exit (min)': df['_stage3_val'],
-        'Gate In (min)': df['_stage4_val'],
+        'Gate In - Unloading (min)': df['_stage4_val'],
         'Unloading Exit (min)': df['_stage5_val'],
         'Loading TAT (min)': df['Loading_TAT'],
         'Unloading TAT (min)': df['Unloading_TAT'],
         'Total TAT (min)': df['Total_TAT'],
         'DO Receipt (HH:MM)': df['_stage1_val'].apply(minutes_to_hhmm),
-        'Gate In (HH:MM)': df['_stage2_val'].apply(minutes_to_hhmm),
+        'Gate In - Loading (HH:MM)': df['_stage2_val'].apply(minutes_to_hhmm),
         'Loading Exit (HH:MM)': df['_stage3_val'].apply(minutes_to_hhmm),
-        'Gate In (HH:MM)': df['_stage4_val'].apply(minutes_to_hhmm),
+        'Gate In - Unloading (HH:MM)': df['_stage4_val'].apply(minutes_to_hhmm),
         'Unloading Exit (HH:MM)': df['_stage5_val'].apply(minutes_to_hhmm),
         'Loading TAT (HH:MM)': df['Loading_TAT'].apply(minutes_to_hhmm),
         'Unloading TAT (HH:MM)': df['Unloading_TAT'].apply(minutes_to_hhmm),
@@ -656,43 +650,60 @@ def render_tat_report(df_tat, filters=None):
     
     filter_options, tat_columns = get_tat_filter_options(df_tat)
     
+    # Clean up client names in the dataframe
+    if tat_columns['client_col'] and tat_columns['client_col'] in df_tat.columns:
+        df_tat[tat_columns['client_col']] = df_tat[tat_columns['client_col']].str.strip()
+    
     # ── TAT Filters ──────────────────────────────────────────────────────────
     with st.expander("🔍 TAT Data Filters", expanded=True):
         st.markdown('<div class="filter-section">', unsafe_allow_html=True)
         col1, col2, col3 = st.columns(3)
         
+        # Predefined client list
+        ALLOWED_CLIENTS = [
+            "ARCELORMITTAL NIPPON STEEL INDIA LIMITED",
+            "Dalmia Cement (Bharat)Limited",
+            "Hindustan Zinc Limited",
+            "Jindal Steel and Power Limited",
+            "JSW Steel Limited",
+            "TATA STEEL LIMITED CHENNAI",
+            "TATA STEEL LIMITED"
+        ]
+        
+        # Get all unique clients from data
+        all_clients_in_data = sorted(df_tat[tat_columns['client_col']].dropna().unique().tolist()) if tat_columns['client_col'] else []
+        
+        # Find which allowed clients exist in data (case-insensitive matching)
+        available_clients = ["All Clients"]
+        client_mapping = {}  # Map standardized names to actual names in data
+        
+        if all_clients_in_data:
+            for allowed_client in ALLOWED_CLIENTS:
+                for actual_client in all_clients_in_data:
+                    if allowed_client.upper().strip() == actual_client.upper().strip():
+                        available_clients.append(allowed_client)
+                        client_mapping[allowed_client] = actual_client
+                        break
+        
         with col1:
-            # Predefined client list
-            ALLOWED_CLIENTS = [
-                "ARCELORMITTAL NIPPON STEEL INDIA LIMITED",
-                "Dalmia Cement (Bharat)Limited",
-                "Hindustan Zinc Limited",
-                "Jindal Steel and Power Limited",
-                "JSW Steel Limited",
-                "TATA STEEL LIMITED CHENNAI",
-                "TATA STEEL LIMITED"
-            ]
-            
-            # Client selection
-            if len(filter_options['clients']) > 1:
-                available_clients = [c for c in filter_options['clients'] if c in ALLOWED_CLIENTS or c == "All Clients"]
-                if not available_clients:
-                    available_clients = ["All Clients"]
-                    st.warning("⚠️ None of the specified clients found in TAT data")
+            if len(available_clients) > 1:
                 selected_tat_client = st.selectbox("🏢 Client", available_clients, key="tat_client_filter")
             else:
                 selected_tat_client = "All Clients"
-                st.info("ℹ️ No Client column found")
+                st.warning("⚠️ None of the specified clients found in TAT data")
         
         with col2:
             # DYNAMIC PLANT FILTER - Filter plants based on selected client
-            if len(filter_options['plants']) >= 1 and tat_columns['plant_col']:
+            if tat_columns['plant_col'] and len(filter_options['plants']) >= 1:
                 # Build filtered dataframe based on current selections
                 temp_df = df_tat.copy()
                 
+                # Get actual client name from mapping
+                actual_client_name = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
+                
                 # Filter by client if selected
-                if selected_tat_client != "All Clients" and tat_columns['client_col']:
-                    temp_df = temp_df[temp_df[tat_columns['client_col']] == selected_tat_client]
+                if actual_client_name != "All Clients" and tat_columns['client_col']:
+                    temp_df = temp_df[temp_df[tat_columns['client_col']] == actual_client_name]
                 
                 # Get plants for filtered data
                 filtered_plants = sorted(temp_df[tat_columns['plant_col']].dropna().unique().tolist())
@@ -711,13 +722,16 @@ def render_tat_report(df_tat, filters=None):
         
         with col3:
             # DYNAMIC DESTINATION FILTER - Filter destinations based on selected client and plant
-            if len(filter_options['destinations']) >= 1 and tat_columns['destination_col']:
+            if tat_columns['destination_col'] and len(filter_options['destinations']) >= 1:
                 # Build filtered dataframe based on current selections
                 temp_df = df_tat.copy()
                 
+                # Get actual client name from mapping
+                actual_client_name = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
+                
                 # Filter by client if selected
-                if selected_tat_client != "All Clients" and tat_columns['client_col']:
-                    temp_df = temp_df[temp_df[tat_columns['client_col']] == selected_tat_client]
+                if actual_client_name != "All Clients" and tat_columns['client_col']:
+                    temp_df = temp_df[temp_df[tat_columns['client_col']] == actual_client_name]
                 
                 # Filter by plant if selected
                 if selected_tat_plant != "All Plants" and tat_columns['plant_col']:
@@ -735,12 +749,9 @@ def render_tat_report(df_tat, filters=None):
                 
                 selected_tat_destination = st.selectbox("📍 Destination", destination_options, key=current_dest_key)
                 selected_tat_destinations = None
-                enable_multi_dest = False
             else:
                 selected_tat_destination = "All Destinations"
                 selected_tat_destinations = None
-                enable_multi_dest = False
-                st.info("ℹ️ No Destination column found")
         
         st.markdown("<br>", unsafe_allow_html=True)
         
@@ -762,7 +773,7 @@ def render_tat_report(df_tat, filters=None):
         with col3:
             if st.button("🗑️ Clear TAT Filters", use_container_width=True, key="clear_tat_filters"):
                 for key in ["tat_client_filter", "tat_plant_filter", "tat_destination_filter",
-                           "tat_trip_filter_checkbox", "tat_multi_dest_checkbox"]:
+                           "tat_trip_filter_checkbox"]:
                     if key in st.session_state: del st.session_state[key]
                 st.rerun()
         
@@ -770,24 +781,16 @@ def render_tat_report(df_tat, filters=None):
     
     st.markdown("---")
     
-    # Build filter dictionary
+    # Build filter dictionary with actual client name
+    actual_client_for_filter = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
+    
     tat_filters = {
-        'client': selected_tat_client if 'selected_tat_client' in locals() else "All Clients",
+        'client': actual_client_for_filter,
         'plant': selected_tat_plant if 'selected_tat_plant' in locals() else "All Plants",
         'destination': selected_tat_destination if 'selected_tat_destination' in locals() and selected_tat_destination != "All Destinations" else "All Destinations",
         'date_range': (start_date, end_date) if 'start_date' in locals() else (None, None),
         'trip_nos': filters.get('trip_nos') if use_trip_filter and filters else None,
         'multi_destinations': None
-    }
-    
-    # Build filter dictionary
-    tat_filters = {
-        'client': selected_tat_client if 'selected_tat_client' in locals() else "All Clients",
-        'plant': selected_tat_plant if 'selected_tat_plant' in locals() else "All Plants",
-        'destination': selected_tat_destination if 'selected_tat_destination' in locals() and selected_tat_destination != "All Destinations" else "All Destinations",
-        'date_range': (start_date, end_date) if 'start_date' in locals() else (None, None),
-        'trip_nos': filters.get('trip_nos') if use_trip_filter and filters else None,
-        'multi_destinations': selected_tat_destinations if 'selected_tat_destinations' in locals() and selected_tat_destinations else None
     }
     
     avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_tat_df = process_tat_data(df_tat, tat_filters)
@@ -798,10 +801,9 @@ def render_tat_report(df_tat, filters=None):
     
     # Filter status
     active_filters = []
-    if tat_filters['client'] != "All Clients": active_filters.append(f"Client: **{tat_filters['client']}**")
+    if tat_filters['client'] != "All Clients": active_filters.append(f"Client: **{selected_tat_client}**")
     if tat_filters['plant'] != "All Plants": active_filters.append(f"Plant: **{tat_filters['plant']}**")
     if tat_filters['destination'] != "All Destinations": active_filters.append(f"Destination: **{tat_filters['destination']}**")
-    if tat_filters.get('multi_destinations'): active_filters.append(f"Destinations: **{len(tat_filters['multi_destinations'])}** selected")
     if tat_filters['date_range'][0] and tat_filters['date_range'][1]: active_filters.append(f"Date: **{tat_filters['date_range'][0]}** to **{tat_filters['date_range'][1]}**")
     if use_trip_filter and tat_filters['trip_nos']: active_filters.append(f"Trip Filter: **{len(tat_filters['trip_nos']):,}** trips")
     
@@ -867,34 +869,6 @@ def render_tat_report(df_tat, filters=None):
     if total_tat > 0 and not filtered_tat_df.empty:
         st.markdown("---")
         
-        # ── DEBUG: Show what data we have ────────────────────────────────────
-        with st.expander("🔍 Debug Info - Check Missing Plants", expanded=False):
-            st.write("**Filtered TAT Data (Deduplicated):**")
-            st.write(f"Total unique trips: {len(filtered_tat_df)}")
-            
-            if tat_columns['client_col'] and tat_columns['client_col'] in filtered_tat_df.columns:
-                st.write("**Clients in filtered data:**")
-                st.write(filtered_tat_df[tat_columns['client_col']].value_counts())
-            
-            if tat_columns['plant_col'] and tat_columns['plant_col'] in filtered_tat_df.columns:
-                st.write("**Plants in filtered data:**")
-                plant_counts = filtered_tat_df[tat_columns['plant_col']].value_counts()
-                st.write(plant_counts)
-                st.write(f"Total unique plants: {len(plant_counts)}")
-            
-            # Also check the original df_tat for the missing plant
-            if tat_columns['plant_col'] and tat_columns['client_col']:
-                st.write("**ALL plants in original TAT data for selected client:**")
-                if selected_tat_client != "All Clients":
-                    client_data = df_tat[df_tat[tat_columns['client_col']] == selected_tat_client]
-                else:
-                    client_data = df_tat
-                all_client_plants = client_data[tat_columns['plant_col']].value_counts()
-                st.write(all_client_plants)
-                st.write(f"Total plants in original data for client: {len(all_client_plants)}")
-        
-        st.markdown("---")
-        
         # ── CLIENT | PLANT | TAT SUMMARY TABLE ───────────────────────────────
         st.markdown("### 📊 Client / Plant TAT Summary")
         st.markdown("**LOADING TAT (S1+S2+S3) | UNLOADING TAT (S4+S5) | TOTAL TAT (Loading + Unloading)**")
@@ -954,7 +928,7 @@ def render_tat_report(df_tat, filters=None):
                 table_html += f'<td class="total-cell">{row["Total_TAT_HHMM"]}</td>'
                 table_html += '</tr>'
             
-            # Grand Total row - CORRECTED ALIGNMENT
+            # Grand Total row
             total_trips_count = int(summary_df["No_of_Trips"].sum())
             weighted_s1 = (summary_df["Stage1_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
             weighted_s2 = (summary_df["Stage2_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
@@ -972,7 +946,6 @@ def render_tat_report(df_tat, filters=None):
             
             table_html += '<tr class="grand-total-row">'
             table_html += f'<td colspan="{label_colspan}" class="grand-total-label">GRAND TOTAL - All Records</td>'
-            # No. of Trips as separate cell
             table_html += f'<td><strong>{total_trips_count}</strong></td>'
             table_html += f'<td class="loading-cell">{weighted_s1:.1f}<br><small>{minutes_to_hhmm(weighted_s1)}</small></td>'
             table_html += f'<td class="loading-cell">{weighted_s2:.1f}<br><small>{minutes_to_hhmm(weighted_s2)}</small></td>'
@@ -1009,11 +982,12 @@ def render_tat_report(df_tat, filters=None):
                 )
                 
                 if selected_drill_plant:
-                    # Get drilldown data
+                    # Get drilldown data with actual client name
                     drilldown_df = get_plant_drilldown_data(
                         filtered_tat_df,
                         tat_columns,
-                        selected_drill_plant
+                        selected_drill_plant,
+                        client_value=actual_client_for_filter if actual_client_for_filter != "All Clients" else None
                     )
                     
                     if not drilldown_df.empty:
