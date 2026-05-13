@@ -399,8 +399,8 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     for col in other_cols:
         agg_dict[col] = 'first'
     
-    # Group by Trip No
-    deduped = df.groupby(trip_no_col, as_index=False).agg(agg_dict)
+    # Group by both Trip No AND Plant so a trip at a different plant isn't deleted
+    deduped = df.groupby([trip_no_col, tat_columns['plant_col']], as_index=False).agg(agg_dict)
     
     # Restore original column names for stages
     for stage in stage_cols:
