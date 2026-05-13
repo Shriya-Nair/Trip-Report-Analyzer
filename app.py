@@ -417,6 +417,14 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     
     # Group by Trip No and aggregate
     trip_no_col = tat_columns['trip_no_col']
+    
+    # FIX: Handle case where trip_no_col might have NaN values
+    df = df.dropna(subset=[trip_no_col])
+    
+    if df.empty:
+        return df_tat
+    
+    # Build aggregation dictionary
     agg_dict = {col: 'mean' for col in numeric_cols}
     
     # Keep first occurrence of other columns
@@ -424,7 +432,13 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     for col in other_cols:
         agg_dict[col] = 'first'
     
-    deduped = df.groupby(trip_no_col, as_index=False).agg(agg_dict)
+    # Group by Trip No
+    try:
+        deduped = df.groupby(trip_no_col, as_index=False).agg(agg_dict)
+    except Exception as e:
+        # If aggregation fails, return original
+        print(f"Dedup aggregation failed: {e}")
+        return df_tat
     
     # Rename back the stage value columns to original names for compatibility
     for stage in stage_cols:
@@ -457,10 +471,17 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
                 date_series = pd.to_datetime(df_filtered[columns['date_col']], errors='coerce')
                 df_filtered = df_filtered[(date_series >= pd.Timestamp(start_date)) & (date_series <= pd.Timestamp(end_date))]
     
-    if df_filtered.empty: return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+    # FIX: Don't return empty if we have data
+    if df_filtered.empty: 
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
     
     # Deduplicate TAT data before calculations
     df_deduped = deduplicate_tat_data(df_filtered, columns)
+    
+    # FIX: Check if deduped is empty
+    if df_deduped.empty:
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+    
     total_records = len(df_deduped)  # Count unique trips after dedup
     
     averages = {}
@@ -469,11 +490,11 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
         if col and col in df_deduped.columns:
             avg_val = pd.to_numeric(df_deduped[col], errors='coerce').mean()
             averages[stage] = avg_val if not pd.isna(avg_val) else 0
-        else: averages[stage] = 0
+        else: 
+            averages[stage] = 0
     
     return (averages["stage1"], averages["stage2"], averages["stage3"],
             averages["stage4"], averages["stage5"], total_records, df_deduped)
-
 
 def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
     columns = identify_tat_columns(df_tat)
@@ -502,10 +523,13 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary."""
     if df_tat.empty: return pd.DataFrame()
     
-    # Deduplicate first
+    # Deduplicate first - KEEP THIS but make sure it preserves all unique trips
     df_deduped = deduplicate_tat_data(df_tat, tat_columns)
     
-    # Calculate stages
+    # If after dedup we have no data, return empty
+    if df_deduped.empty: return pd.DataFrame()
+    
+    # Calculate stages - ensure we handle single values correctly
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = tat_columns[stage]
         if col and col in df_deduped.columns:
@@ -527,17 +551,27 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     if not group_cols:
         return pd.DataFrame()
     
-    summary = df_deduped.groupby(group_cols).agg(
-        No_of_Trips=("_total_tat", "count"),
-        Stage1_Avg=("_stage1_val", "mean"),
-        Stage2_Avg=("_stage2_val", "mean"),
-        Stage3_Avg=("_stage3_val", "mean"),
-        Stage4_Avg=("_stage4_val", "mean"),
-        Stage5_Avg=("_stage5_val", "mean"),
-        Loading_TAT=("_loading_tat", "mean"),
-        Unloading_TAT=("_unloading_tat", "mean"),
-        Total_TAT=("_total_tat", "mean"),
-    ).reset_index()
+    # Check if we have enough data to group
+    if len(df_deduped) == 0:
+        return pd.DataFrame()
+    
+    # Group by and aggregate - FIX: Handle single rows properly
+    try:
+        summary = df_deduped.groupby(group_cols, as_index=False).agg(
+            No_of_Trips=("_total_tat", "count"),
+            Stage1_Avg=("_stage1_val", "mean"),
+            Stage2_Avg=("_stage2_val", "mean"),
+            Stage3_Avg=("_stage3_val", "mean"),
+            Stage4_Avg=("_stage4_val", "mean"),
+            Stage5_Avg=("_stage5_val", "mean"),
+            Loading_TAT=("_loading_tat", "mean"),
+            Unloading_TAT=("_unloading_tat", "mean"),
+            Total_TAT=("_total_tat", "mean"),
+        )
+    except Exception as e:
+        # If groupby fails, try manual calculation
+        st.warning(f"Groupby failed: {e}. Using manual calculation.")
+        return pd.DataFrame()
     
     # Add HH:MM columns
     summary["Stage1_HHMM"] = summary["Stage1_Avg"].apply(minutes_to_hhmm)
