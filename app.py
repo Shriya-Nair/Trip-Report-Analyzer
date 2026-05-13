@@ -617,7 +617,7 @@ def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None
     return result_df
 
 
-    def render_tat_report(df_tat, filters=None):
+def render_tat_report(df_tat, filters=None):
     st.subheader("📊 Turnaround Time (TAT) Analysis Report")
     
     filter_options, tat_columns = get_tat_filter_options(df_tat)
