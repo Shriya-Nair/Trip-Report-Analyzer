@@ -652,7 +652,7 @@ def render_tat_report(df_tat, filters=None):
         
         with col2:
             # DYNAMIC PLANT FILTER - Filter plants based on selected client
-            if len(filter_options['plants']) > 1 and tat_columns['plant_col']:
+            if len(filter_options['plants']) >= 1 and tat_columns['plant_col']:
                 # Build filtered dataframe based on current selections
                 temp_df = df_tat.copy()
                 
@@ -677,7 +677,7 @@ def render_tat_report(df_tat, filters=None):
         
         with col3:
             # DYNAMIC DESTINATION FILTER - Filter destinations based on selected client and plant
-            if len(filter_options['destinations']) > 1 and tat_columns['destination_col']:
+            if len(filter_options['destinations']) >= 1 and tat_columns['destination_col']:
                 # Build filtered dataframe based on current selections
                 temp_df = df_tat.copy()
                 
