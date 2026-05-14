@@ -702,7 +702,7 @@ def render_tat_report(df_tat, filters=None):
         
         with col2:
             if tat_columns['plant_col']:
-            temp_df = df_tat.copy()
+                temp_df = df_tat.copy()
                 if actual_client_name != "All Clients" and tat_columns['client_col']:
                 # FIX: Use EXACT match to avoid "TATA STEEL LIMITED" matching "TATA STEEL LIMITED CHENNAI"
                 # Standardize column for comparison
