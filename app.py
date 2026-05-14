@@ -246,60 +246,46 @@ def _build_destination_alias_map(all_destinations: pd.Series, threshold: float =
 
 # ── Deduplication ────────────────────────────────────────────────────────────
 def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Merge rows with the same Trip No into a single row.
-    Numeric columns are averaged across duplicates.
-    Non-numeric columns take the value from the first/most-representative row.
-    """
     if "Trip No" not in df.columns: return df, pd.DataFrame()
     alias_map = _build_destination_alias_map(df["Destination"].fillna("Unknown"))
     df = df.copy()
     df["Destination"] = df["Destination"].map(lambda d: alias_map.get(d, d))
-
     duplicated_mask = df.duplicated(subset=["Trip No"], keep=False)
     unique_df = df[~duplicated_mask].copy()
     dup_df = df[duplicated_mask].copy()
-    audit_records = []
-    merged_rows = []
-
-    # Identify numeric columns (excluding Trip No itself)
-    numeric_cols = [c for c in df.select_dtypes(include="number").columns if c != "Trip No"]
+    audit_records, merged_rows, merged_qtys = [], [], []
 
     for trip_no, group in dup_df.groupby("Trip No"):
         destinations = group["Destination"].dropna().unique().tolist()
-
-        # Build the merged representative row from the first row's non-numeric values
-        representative = group.iloc[0].copy()
-
-        # Average all numeric columns across the duplicate rows
-        avg_numerics = group[numeric_cols].mean()
-        for col in numeric_cols:
-            representative[col] = avg_numerics[col]
-
-        # For Destination: use canonical if same, else keep the one with the highest original Inv Qty
-        if len(destinations) > 1:
-            best_idx = group["Inv Qty"].idxmax()
-            representative["Destination"] = group.loc[best_idx, "Destination"]
-            action = "MERGED – different destinations (averaged numeric cols)"
+        if len(destinations) == 1:
+            summed_qty = float(group["Inv Qty"].sum())
+            representative = group.iloc[0].copy()
+            merged_rows.append(representative)
+            merged_qtys.append(summed_qty)
+            audit_records.append({
+                "Trip No": trip_no, "Action": "MERGED – same destination",
+                "Destinations Found": "; ".join(destinations),
+                "Canonical Destination": destinations[0],
+                "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
+                "Final Qty": summed_qty, "Rows Affected": len(group),
+            })
         else:
-            action = "MERGED – same destination (averaged numeric cols)"
+            best_idx = group["Inv Qty"].idxmax()
+            best_qty = float(group.loc[best_idx, "Inv Qty"])
+            representative = group.loc[best_idx].copy()
+            merged_rows.append(representative)
+            merged_qtys.append(best_qty)
+            audit_records.append({
+                "Trip No": trip_no, "Action": "KEPT BEST LEG – different destinations",
+                "Destinations Found": "; ".join(destinations),
+                "Canonical Destination": representative["Destination"],
+                "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
+                "Final Qty": best_qty, "Rows Affected": len(group),
+            })
 
-        merged_rows.append(representative)
-        audit_records.append({
-            "Trip No": trip_no,
-            "Action": action,
-            "Destinations Found": "; ".join(destinations),
-            "Canonical Destination": representative["Destination"],
-            "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
-            "Final Qty (avg)": float(representative["Inv Qty"]),
-            "Rows Affected": len(group),
-        })
-
-    if merged_rows:
-        merged_df = pd.DataFrame(merged_rows)
-        final_df = pd.concat([unique_df, merged_df], ignore_index=True)
-    else:
-        final_df = unique_df.copy()
-
+    merged_df = pd.DataFrame(merged_rows)
+    merged_df["Inv Qty"] = [float(q) for q in merged_qtys]
+    final_df = pd.concat([unique_df, merged_df], ignore_index=True)
     audit_df = pd.DataFrame(audit_records) if audit_records else pd.DataFrame()
     return final_df, audit_df
 
@@ -991,7 +977,7 @@ def render_tat_report(df_tat, filters=None):
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🚛 Trip Report and TAT Report Analyzer")
-st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination.")
+st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination OR Upload TAT reports to analyze Total Loading/Unloading TAT per Clients.")
 st.divider()
 
 col1, col2 = st.columns(2)
