@@ -374,55 +374,57 @@ def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
 
 
 def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFrame:
-    """Deduplicate TAT data by Trip No AND Plant, averaging stage values."""
+    """
+    Business Rule:
+    Same 7-digit Trip No appearing multiple times
+    must be treated as ONE trip.
+    """
+
     if df_tat.empty or not tat_columns['trip_no_col']:
         return df_tat
-    
+
     df = df_tat.copy()
-    trip_no_col = tat_columns['trip_no_col']
-    plant_col = tat_columns['plant_col']
-    
-    # Ensure Trip No is string and remove trailing .0 from float conversion
-    df[trip_no_col] = df[trip_no_col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-    if plant_col and plant_col in df.columns:
-        df[plant_col] = df[plant_col].astype(str).str.strip()
-    
-    # Build group columns - Trip No + Plant
-    group_cols = [trip_no_col]
-    if plant_col and plant_col in df.columns:
-        group_cols.append(plant_col)
 
-    # Fill NaN in group key columns with a placeholder so groupby never silently drops rows
-    for gc in group_cols:
-        df[gc] = df[gc].fillna("__UNKNOWN__")
+    trip_col = tat_columns['trip_no_col']
 
-    # Convert stage columns to numeric with fillna(0)
-    stage_cols = ['stage1', 'stage2', 'stage3', 'stage4', 'stage5']
-    numeric_cols = []
-    for stage in stage_cols:
+    # Standardize Trip No
+    df[trip_col] = (
+        df[trip_col]
+        .astype(str)
+        .str.strip()
+    )
+
+    # Remove exact duplicate rows first
+    df = df.drop_duplicates()
+
+    # Convert TAT stage columns to numeric
+    stage_cols = []
+
+    for stage in ['stage1', 'stage2', 'stage3', 'stage4', 'stage5']:
         col = tat_columns[stage]
+
         if col and col in df.columns:
-            df[f"_{stage}_val"] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            numeric_cols.append(f"_{stage}_val")
-    
-    if not numeric_cols:
-        return df_tat
-    
-    # Build aggregation: mean for numeric, first for others
-    agg_dict = {col: 'mean' for col in numeric_cols}
-    other_cols = [c for c in df.columns if c not in numeric_cols and c not in group_cols]
-    for col in other_cols:
-        agg_dict[col] = 'first'
-    
-    # Group by Trip No + Plant — dropna=False ensures rows with NaN keys are never silently dropped
-    deduped = df.groupby(group_cols, as_index=False, dropna=False).agg(agg_dict)
-    
-    # Restore original column names for stages
-    for stage in stage_cols:
-        col = tat_columns[stage]
-        if col and f"_{stage}_val" in deduped.columns:
-            deduped[col] = deduped[f"_{stage}_val"]
-    
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            stage_cols.append(col)
+
+    # Aggregation logic
+    agg_dict = {}
+
+    # Average TAT values across duplicate rows
+    for col in stage_cols:
+        agg_dict[col] = 'mean'
+
+    # Keep first metadata value
+    for col in df.columns:
+        if col not in agg_dict and col != trip_col:
+            agg_dict[col] = 'first'
+
+    # ONLY GROUP BY TRIP NO
+    deduped = (
+        df.groupby(trip_col, as_index=False)
+        .agg(agg_dict)
+    )
+
     return deduped
 
 
