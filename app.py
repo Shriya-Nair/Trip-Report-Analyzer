@@ -391,7 +391,11 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     group_cols = [trip_no_col]
     if plant_col and plant_col in df.columns:
         group_cols.append(plant_col)
-    
+
+    # Fill NaN in group key columns with a placeholder so groupby never silently drops rows
+    for gc in group_cols:
+        df[gc] = df[gc].fillna("__UNKNOWN__")
+
     # Convert stage columns to numeric with fillna(0)
     stage_cols = ['stage1', 'stage2', 'stage3', 'stage4', 'stage5']
     numeric_cols = []
@@ -410,8 +414,8 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     for col in other_cols:
         agg_dict[col] = 'first'
     
-    # Group by Trip No + Plant
-    deduped = df.groupby(group_cols, as_index=False).agg(agg_dict)
+    # Group by Trip No + Plant — dropna=False ensures rows with NaN keys are never silently dropped
+    deduped = df.groupby(group_cols, as_index=False, dropna=False).agg(agg_dict)
     
     # Restore original column names for stages
     for stage in stage_cols:
@@ -453,8 +457,8 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
                     df_filtered = df_filtered[df_filtered[columns['client_col']].isin(matching_clients)]
         
         if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
-            df_filtered[columns['plant_col']] = df_filtered[columns['plant_col']].astype(str).str.strip()
-            df_filtered = df_filtered[df_filtered[columns['plant_col']] == str(filters['plant']).strip()]
+            df_filtered[columns['plant_col']] = df_filtered[columns['plant_col']].astype(str).str.upper().str.strip()
+            df_filtered = df_filtered[df_filtered[columns['plant_col']] == str(filters['plant']).upper().strip()]
             
         if filters.get('destination') and filters['destination'] != "All Destinations" and columns['destination_col']:
             df_filtered = df_filtered[df_filtered[columns['destination_col']] == filters['destination']]
@@ -977,7 +981,7 @@ def render_tat_report(df_tat, filters=None):
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🚛 Trip Report and TAT Report Analyzer")
-st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination OR Upload TAT reports to analyze Total Loading/Unloading TAT per Clients.")
+st.markdown("Upload one or more monthly trip reports to explore trips by client, plant, and destination.")
 st.divider()
 
 col1, col2 = st.columns(2)
