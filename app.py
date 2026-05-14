@@ -246,46 +246,60 @@ def _build_destination_alias_map(all_destinations: pd.Series, threshold: float =
 
 # ── Deduplication ────────────────────────────────────────────────────────────
 def deduplicate_trips(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Merge rows with the same Trip No into a single row.
+    Numeric columns are averaged across duplicates.
+    Non-numeric columns take the value from the first/most-representative row.
+    """
     if "Trip No" not in df.columns: return df, pd.DataFrame()
     alias_map = _build_destination_alias_map(df["Destination"].fillna("Unknown"))
     df = df.copy()
     df["Destination"] = df["Destination"].map(lambda d: alias_map.get(d, d))
+
     duplicated_mask = df.duplicated(subset=["Trip No"], keep=False)
     unique_df = df[~duplicated_mask].copy()
     dup_df = df[duplicated_mask].copy()
-    audit_records, merged_rows, merged_qtys = [], [], []
+    audit_records = []
+    merged_rows = []
+
+    # Identify numeric columns (excluding Trip No itself)
+    numeric_cols = [c for c in df.select_dtypes(include="number").columns if c != "Trip No"]
 
     for trip_no, group in dup_df.groupby("Trip No"):
         destinations = group["Destination"].dropna().unique().tolist()
-        if len(destinations) == 1:
-            summed_qty = float(group["Inv Qty"].sum())
-            representative = group.iloc[0].copy()
-            merged_rows.append(representative)
-            merged_qtys.append(summed_qty)
-            audit_records.append({
-                "Trip No": trip_no, "Action": "MERGED – same destination",
-                "Destinations Found": "; ".join(destinations),
-                "Canonical Destination": destinations[0],
-                "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
-                "Final Qty": summed_qty, "Rows Affected": len(group),
-            })
-        else:
-            best_idx = group["Inv Qty"].idxmax()
-            best_qty = float(group.loc[best_idx, "Inv Qty"])
-            representative = group.loc[best_idx].copy()
-            merged_rows.append(representative)
-            merged_qtys.append(best_qty)
-            audit_records.append({
-                "Trip No": trip_no, "Action": "KEPT BEST LEG – different destinations",
-                "Destinations Found": "; ".join(destinations),
-                "Canonical Destination": representative["Destination"],
-                "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
-                "Final Qty": best_qty, "Rows Affected": len(group),
-            })
 
-    merged_df = pd.DataFrame(merged_rows)
-    merged_df["Inv Qty"] = [float(q) for q in merged_qtys]
-    final_df = pd.concat([unique_df, merged_df], ignore_index=True)
+        # Build the merged representative row from the first row's non-numeric values
+        representative = group.iloc[0].copy()
+
+        # Average all numeric columns across the duplicate rows
+        avg_numerics = group[numeric_cols].mean()
+        for col in numeric_cols:
+            representative[col] = avg_numerics[col]
+
+        # For Destination: use canonical if same, else keep the one with the highest original Inv Qty
+        if len(destinations) > 1:
+            best_idx = group["Inv Qty"].idxmax()
+            representative["Destination"] = group.loc[best_idx, "Destination"]
+            action = "MERGED – different destinations (averaged numeric cols)"
+        else:
+            action = "MERGED – same destination (averaged numeric cols)"
+
+        merged_rows.append(representative)
+        audit_records.append({
+            "Trip No": trip_no,
+            "Action": action,
+            "Destinations Found": "; ".join(destinations),
+            "Canonical Destination": representative["Destination"],
+            "Original Qty Values": "; ".join(group["Inv Qty"].astype(str).tolist()),
+            "Final Qty (avg)": float(representative["Inv Qty"]),
+            "Rows Affected": len(group),
+        })
+
+    if merged_rows:
+        merged_df = pd.DataFrame(merged_rows)
+        final_df = pd.concat([unique_df, merged_df], ignore_index=True)
+    else:
+        final_df = unique_df.copy()
+
     audit_df = pd.DataFrame(audit_records) if audit_records else pd.DataFrame()
     return final_df, audit_df
 
@@ -512,11 +526,14 @@ def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
 
 
 def calculate_client_plant_tat_summary(df_tat, tat_columns):
-    """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary."""
+    """Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary.
+    
+    NOTE: df_tat is expected to be already deduplicated by process_tat_data.
+    We do NOT deduplicate again here to avoid double-shrinking the dataset.
+    """
     if df_tat.empty: return pd.DataFrame()
     
-    # Deduplicate first
-    df_deduped = deduplicate_tat_data(df_tat, tat_columns)
+    df_deduped = df_tat.copy()
     
     if df_deduped.empty: return pd.DataFrame()
     
@@ -698,6 +715,11 @@ def render_tat_report(df_tat, filters=None):
                     temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
                     exact_client_name = str(actual_client_name).upper().strip()
                     temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
+                elif tat_columns['client_col']:
+                    # "All Clients" — restrict to only ALLOWED_CLIENTS so unrelated plants are excluded
+                    temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
+                    allowed_upper = [c.upper().strip() for c in ALLOWED_CLIENTS]
+                    temp_df = temp_df[temp_df[tat_columns['client_col']].isin(allowed_upper)]
                 
                 filtered_plants = sorted(temp_df[tat_columns['plant_col']].dropna().unique().tolist())
                 plant_options = ["All Plants"] + filtered_plants if filtered_plants else ["All Plants"]
@@ -714,6 +736,11 @@ def render_tat_report(df_tat, filters=None):
                     temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
                     exact_client_name = str(actual_client_name).upper().strip()
                     temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
+                elif tat_columns['client_col']:
+                    # "All Clients" — restrict to only ALLOWED_CLIENTS so unrelated destinations are excluded
+                    temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
+                    allowed_upper = [c.upper().strip() for c in ALLOWED_CLIENTS]
+                    temp_df = temp_df[temp_df[tat_columns['client_col']].isin(allowed_upper)]
                 
                 if selected_tat_plant != "All Plants" and tat_columns['plant_col']:
                     temp_df[tat_columns['plant_col']] = temp_df[tat_columns['plant_col']].astype(str).str.strip()
@@ -833,7 +860,17 @@ def render_tat_report(df_tat, filters=None):
         st.markdown("### 📊 Client / Plant TAT Summary")
         st.markdown("**LOADING TAT (S1+S2+S3) | UNLOADING TAT (S4+S5) | TOTAL TAT (Loading + Unloading)**")
         
-        summary_df = calculate_client_plant_tat_summary(filtered_tat_df, tat_columns)
+        # For the summary table use client-level filters only (no plant/destination filter)
+        # so that ALL plants for the selected client always appear as separate rows.
+        summary_filters = {
+            'client': actual_client_name,
+            'plant': "All Plants",
+            'destination': "All Destinations",
+            'date_range': tat_filters.get('date_range', (None, None)),
+            'trip_nos': tat_filters.get('trip_nos'),
+        }
+        _, _, _, _, _, _, summary_source_df = process_tat_data(df_tat, summary_filters)
+        summary_df = calculate_client_plant_tat_summary(summary_source_df, tat_columns)
         
         if not summary_df.empty:
             has_client = tat_columns['client_col'] and tat_columns['client_col'] in summary_df.columns
