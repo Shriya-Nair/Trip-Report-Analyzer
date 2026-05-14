@@ -382,7 +382,7 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     trip_no_col = tat_columns['trip_no_col']
     plant_col = tat_columns['plant_col']
     
-    # FIX: Ensure Trip No is string and remove trailing .0 from float conversion
+    # Ensure Trip No is string and remove trailing .0 from float conversion
     df[trip_no_col] = df[trip_no_col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     if plant_col and plant_col in df.columns:
         df[plant_col] = df[plant_col].astype(str).str.strip()
@@ -422,6 +422,72 @@ def deduplicate_tat_data(df_tat: pd.DataFrame, tat_columns: dict) -> pd.DataFram
     return deduped
 
 
+def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
+    if df_tat.empty: return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+    
+    df_filtered = df_tat.copy()
+    columns = identify_tat_columns(df_tat)
+    
+    # Apply filters
+    if filters:
+        if filters.get('trip_nos') and columns['trip_no_col']:
+            trip_nos_str = [str(t).strip() for t in filters['trip_nos']]
+            df_filtered[columns['trip_no_col']] = df_filtered[columns['trip_no_col']].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            df_filtered = df_filtered[df_filtered[columns['trip_no_col']].isin(trip_nos_str)]
+        
+        # Use EXACT match for client to keep "TATA STEEL LIMITED" and "TATA STEEL LIMITED CHENNAI" separate
+        if filters.get('client') and filters['client'] != "All Clients" and columns['client_col']:
+            client_search = str(filters['client']).strip().upper()
+            df_filtered[columns['client_col']] = df_filtered[columns['client_col']].astype(str).str.upper().str.strip()
+            
+            # Try exact match first
+            exact_mask = df_filtered[columns['client_col']] == client_search
+            if exact_mask.any():
+                df_filtered = df_filtered[exact_mask]
+            else:
+                # If no exact match, find clients that CONTAIN the search term
+                # (for cases like "DALMIA CEMENT" matching "DALMIA CEMENT (BHARAT)LIMITED")
+                all_clients = df_filtered[columns['client_col']].unique()
+                matching_clients = [c for c in all_clients if client_search in c]
+                if matching_clients:
+                    df_filtered = df_filtered[df_filtered[columns['client_col']].isin(matching_clients)]
+        
+        if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
+            df_filtered[columns['plant_col']] = df_filtered[columns['plant_col']].astype(str).str.strip()
+            df_filtered = df_filtered[df_filtered[columns['plant_col']] == str(filters['plant']).strip()]
+            
+        if filters.get('destination') and filters['destination'] != "All Destinations" and columns['destination_col']:
+            df_filtered = df_filtered[df_filtered[columns['destination_col']] == filters['destination']]
+            
+        if filters.get('date_range') and columns['date_col']:
+            start_date, end_date = filters['date_range']
+            if start_date and end_date:
+                date_series = pd.to_datetime(df_filtered[columns['date_col']], errors='coerce')
+                df_filtered = df_filtered[(date_series >= pd.Timestamp(start_date)) & (date_series <= pd.Timestamp(end_date))]
+    
+    if df_filtered.empty:
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+    
+    df_deduped = deduplicate_tat_data(df_filtered, columns)
+    
+    if df_deduped.empty:
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+    
+    total_records = len(df_deduped)
+    
+    averages = {}
+    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
+        col = columns[stage]
+        if col and col in df_deduped.columns:
+            avg_val = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0).mean()
+            averages[stage] = avg_val if not pd.isna(avg_val) else 0
+        else:
+            averages[stage] = 0
+    
+    return (averages["stage1"], averages["stage2"], averages["stage3"],
+            averages["stage4"], averages["stage5"], total_records, df_deduped)
+
+
 def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
     columns = identify_tat_columns(df_tat)
     options = {}
@@ -454,7 +520,7 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     
     if df_deduped.empty: return pd.DataFrame()
     
-    # Calculate stage values with fillna(0)
+    # Calculate stage values with fillna(0) - Keep ALL rows, no filtering
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
         col = tat_columns[stage]
         if col and col in df_deduped.columns:
@@ -476,7 +542,7 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     if not group_cols:
         return pd.DataFrame()
     
-    # Group by and aggregate - KEEP ALL ROWS, NO FILTERING
+    # Group by and aggregate - NO filtering, NO dropping rows
     summary = df_deduped.groupby(group_cols, as_index=False).agg(
         No_of_Trips=(group_cols[0], "count"),
         Stage1_Avg=("_stage1_val", "mean"),
@@ -503,18 +569,20 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     
     return summary
 
+
 def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None):
     """Get detailed trip-level data for a specific plant."""
     df = df_tat.copy()
     
     # Filter by plant if specific plant is selected
     if plant_value and plant_value != "All Plants" and tat_columns['plant_col'] and tat_columns['plant_col'] in df.columns:
-        df = df[df[tat_columns['plant_col']] == plant_value]
+        df[tat_columns['plant_col']] = df[tat_columns['plant_col']].astype(str).str.strip()
+        df = df[df[tat_columns['plant_col']] == str(plant_value).strip()]
     
-    # FIX: Exact match for client to avoid "TATA STEEL LIMITED" matching "TATA STEEL LIMITED CHENNAI"
+    # Use EXACT match for client to avoid "TATA STEEL LIMITED" matching "TATA STEEL LIMITED CHENNAI"
     if client_value and client_value != "All Clients" and tat_columns['client_col'] and tat_columns['client_col'] in df.columns:
-        # Use exact match, not contains
-        df = df[df[tat_columns['client_col']].astype(str).str.upper().str.strip() == str(client_value).upper().strip()]
+        df[tat_columns['client_col']] = df[tat_columns['client_col']].astype(str).str.upper().str.strip()
+        df = df[df[tat_columns['client_col']] == str(client_value).upper().strip()]
     
     if df.empty:
         return pd.DataFrame()
@@ -563,73 +631,13 @@ def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None
     
     return pd.DataFrame(result_cols)
 
-def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
-    if df_tat.empty: return 0, 0, 0, 0, 0, 0, pd.DataFrame()
-    
-    df_filtered = df_tat.copy()
-    columns = identify_tat_columns(df_tat)
-    
-    # Apply filters
-    if filters:
-        if filters.get('trip_nos') and columns['trip_no_col']:
-            trip_nos_str = [str(t).strip() for t in filters['trip_nos']]
-            df_filtered[columns['trip_no_col']] = df_filtered[columns['trip_no_col']].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            df_filtered = df_filtered[df_filtered[columns['trip_no_col']].isin(trip_nos_str)]
-        
-        # FIX: Use EXACT match for client to avoid "TATA STEEL LIMITED" matching "TATA STEEL LIMITED CHENNAI"
-        if filters.get('client') and filters['client'] != "All Clients" and columns['client_col']:
-            client_search = str(filters['client']).strip().upper()
-            
-            df_filtered[columns['client_col']] = df_filtered[columns['client_col']].astype(str).str.upper().str.strip()
-            
-            # First try exact match
-            exact_mask = df_filtered[columns['client_col']] == client_search
-            if exact_mask.any():
-                df_filtered = df_filtered[exact_mask]
-            else:
-                matching_clients = df_filtered[columns['client_col']].unique()
-                matching_clients = [c for c in matching_clients if client_search in c]
-                if matching_clients:
-                    df_filtered = df_filtered[df_filtered[columns['client_col']].isin(matching_clients)]
-        
-        if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
-            df_filtered = df_filtered[df_filtered[columns['plant_col']] == filters['plant']]
-        if filters.get('destination') and filters['destination'] != "All Destinations" and columns['destination_col']:
-            df_filtered = df_filtered[df_filtered[columns['destination_col']] == filters['destination']]
-        if filters.get('date_range') and columns['date_col']:
-            start_date, end_date = filters['date_range']
-            if start_date and end_date:
-                date_series = pd.to_datetime(df_filtered[columns['date_col']], errors='coerce')
-                df_filtered = df_filtered[(date_series >= pd.Timestamp(start_date)) & (date_series <= pd.Timestamp(end_date))]
-    
-    if df_filtered.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
-    
-    df_deduped = deduplicate_tat_data(df_filtered, columns)
-    
-    if df_deduped.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
-    
-    total_records = len(df_deduped)
-    
-    averages = {}
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = columns[stage]
-        if col and col in df_deduped.columns:
-            avg_val = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0).mean()
-            averages[stage] = avg_val if not pd.isna(avg_val) else 0
-        else:
-            averages[stage] = 0
-    
-    return (averages["stage1"], averages["stage2"], averages["stage3"],
-            averages["stage4"], averages["stage5"], total_records, df_deduped)
 
 def render_tat_report(df_tat, filters=None):
     st.subheader("📊 Turnaround Time (TAT) Analysis Report")
     
     filter_options, tat_columns = get_tat_filter_options(df_tat)
     
-    # ── CRITICAL: Standardize ALL names and fix Trip No ──────────────────────
+    # ── Standardize ALL names and fix Trip No ──────────────────────────────────
     if tat_columns['trip_no_col'] and tat_columns['trip_no_col'] in df_tat.columns:
         df_tat[tat_columns['trip_no_col']] = df_tat[tat_columns['trip_no_col']].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     
@@ -649,11 +657,11 @@ def render_tat_report(df_tat, filters=None):
         "TATA STEEL LIMITED"
     ]
     
-    # Find matching clients
+    # Find matching clients - use EXACT match to keep TATA STEEL LIMITED and TATA STEEL LIMITED CHENNAI separate
     all_clients_in_data = sorted(df_tat[tat_columns['client_col']].dropna().unique().tolist()) if tat_columns['client_col'] else []
     available_clients = ["All Clients"]
     client_mapping = {}
-
+    
     if all_clients_in_data:
         for allowed_client in ALLOWED_CLIENTS:
             # First try exact match
@@ -682,44 +690,18 @@ def render_tat_report(df_tat, filters=None):
         
         actual_client_name = client_mapping.get(selected_tat_client, selected_tat_client) if selected_tat_client != "All Clients" else "All Clients"
         
-        # ── DIAGNOSTIC: Show what clients exist in data ──────────────────────
-        with st.expander("🔧 Diagnostic: Client Data", expanded=False):
-            st.write(f"**Selected client from dropdown:** {selected_tat_client}")
-            st.write(f"**Mapped actual client name:** {actual_client_name}")
-            st.write("**All unique clients in TAT data:**")
-            st.write(all_clients_in_data)
-            st.write("**Client mapping:**")
-            st.write(client_mapping)
-            
-            # Show plant distribution for ALL clients that match the pattern
-            if actual_client_name != "All Clients":
-                st.write(f"**Plants for clients matching '{selected_tat_client}':**")
-                client_val = str(selected_tat_client).strip().upper()
-                for actual_cl in all_clients_in_data:
-                    if client_val in actual_cl or actual_cl in client_val:
-                        plant_count = df_tat[df_tat[tat_columns['client_col']] == actual_cl][tat_columns['plant_col']].value_counts()
-                        st.write(f"  Client: **{actual_cl}** → Plants: {dict(plant_count)}")
-        
         with col2:
             if tat_columns['plant_col']:
                 temp_df = df_tat.copy()
                 if actual_client_name != "All Clients" and tat_columns['client_col']:
-                # FIX: Use EXACT match to avoid "TATA STEEL LIMITED" matching "TATA STEEL LIMITED CHENNAI"
-                # Standardize column for comparison
+                    # Use EXACT match to avoid "TATA STEEL LIMITED" matching "TATA STEEL LIMITED CHENNAI"
                     temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
                     exact_client_name = str(actual_client_name).upper().strip()
-            
-                    # Use exact match
                     temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
-        
+                
                 filtered_plants = sorted(temp_df[tat_columns['plant_col']].dropna().unique().tolist())
                 plant_options = ["All Plants"] + filtered_plants if filtered_plants else ["All Plants"]
-        
-            # Diagnostic
-                with st.expander("🔧 Diagnostic: Plant Dropdown Data", expanded=False):
-                    st.write(f"**Number of plants found for filter:** {len(filtered_plants)}")
-                    st.write(f"**Plants:** {filtered_plants}")
-        
+                
                 selected_tat_plant = st.selectbox("🏭 Plant/Source", plant_options, key="tat_plant_filter")
             else:
                 selected_tat_plant = "All Plants"
@@ -728,17 +710,18 @@ def render_tat_report(df_tat, filters=None):
             if tat_columns['destination_col']:
                 temp_df = df_tat.copy()
                 if actual_client_name != "All Clients" and tat_columns['client_col']:
-                    # FIX: Use EXACT match
+                    # Use EXACT match
                     temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
                     exact_client_name = str(actual_client_name).upper().strip()
                     temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
-        
+                
                 if selected_tat_plant != "All Plants" and tat_columns['plant_col']:
-                    temp_df = temp_df[temp_df[tat_columns['plant_col']] == selected_tat_plant]
-        
+                    temp_df[tat_columns['plant_col']] = temp_df[tat_columns['plant_col']].astype(str).str.strip()
+                    temp_df = temp_df[temp_df[tat_columns['plant_col']] == str(selected_tat_plant).strip()]
+                
                 filtered_destinations = sorted(temp_df[tat_columns['destination_col']].dropna().unique().tolist())
                 destination_options = ["All Destinations"] + filtered_destinations if filtered_destinations else ["All Destinations"]
-        
+                
                 selected_tat_destination = st.selectbox("📍 Destination", destination_options, key="tat_destination_filter")
             else:
                 selected_tat_destination = "All Destinations"
@@ -768,11 +751,9 @@ def render_tat_report(df_tat, filters=None):
     
     st.markdown("---")
     
-    # FIX: Use the actual selected client for filtering, but match ALL variants
-    client_search_term = str(selected_tat_client).strip().upper() if selected_tat_client != "All Clients" else "All Clients"
-    
+    # Build TAT filters
     tat_filters = {
-        'client': client_search_term,  # Pass the search term, not mapped name
+        'client': actual_client_name,
         'plant': selected_tat_plant,
         'destination': selected_tat_destination if selected_tat_destination != "All Destinations" else "All Destinations",
         'date_range': (start_date, end_date) if 'start_date' in locals() else (None, None),
@@ -781,18 +762,6 @@ def render_tat_report(df_tat, filters=None):
     
     avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_tat_df = process_tat_data(df_tat, tat_filters)
     
-    # ── DIAGNOSTIC: Show filtered results ────────────────────────────────────
-    with st.expander("🔧 Diagnostic: After Filtering", expanded=False):
-        st.write(f"**Total records after filtering:** {total_records}")
-        if not filtered_tat_df.empty and tat_columns['plant_col']:
-            plant_counts = filtered_tat_df[tat_columns['plant_col']].value_counts()
-            st.write(f"**Plants in filtered data ({len(plant_counts)}):**")
-            st.write(plant_counts)
-        if not filtered_tat_df.empty and tat_columns['client_col']:
-            client_counts = filtered_tat_df[tat_columns['client_col']].value_counts()
-            st.write(f"**Clients in filtered data:**")
-            st.write(client_counts)
-        
     total_loading = avg_stage1 + avg_stage2 + avg_stage3
     total_unloading = avg_stage4 + avg_stage5
     total_tat = total_loading + total_unloading
