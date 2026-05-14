@@ -706,23 +706,23 @@ def render_tat_report(df_tat, filters=None):
                 if actual_client_name != "All Clients" and tat_columns['client_col']:
                 # FIX: Use EXACT match to avoid "TATA STEEL LIMITED" matching "TATA STEEL LIMITED CHENNAI"
                 # Standardize column for comparison
-                temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
-                exact_client_name = str(actual_client_name).upper().strip()
+                    temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
+                    exact_client_name = str(actual_client_name).upper().strip()
             
-                # Use exact match
-                temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
+                    # Use exact match
+                    temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
         
-            filtered_plants = sorted(temp_df[tat_columns['plant_col']].dropna().unique().tolist())
-            plant_options = ["All Plants"] + filtered_plants if filtered_plants else ["All Plants"]
+                filtered_plants = sorted(temp_df[tat_columns['plant_col']].dropna().unique().tolist())
+                plant_options = ["All Plants"] + filtered_plants if filtered_plants else ["All Plants"]
         
             # Diagnostic
-            with st.expander("🔧 Diagnostic: Plant Dropdown Data", expanded=False):
-                st.write(f"**Number of plants found for filter:** {len(filtered_plants)}")
-                st.write(f"**Plants:** {filtered_plants}")
+                with st.expander("🔧 Diagnostic: Plant Dropdown Data", expanded=False):
+                    st.write(f"**Number of plants found for filter:** {len(filtered_plants)}")
+                    st.write(f"**Plants:** {filtered_plants}")
         
-            selected_tat_plant = st.selectbox("🏭 Plant/Source", plant_options, key="tat_plant_filter")
-        else:
-            selected_tat_plant = "All Plants"
+                selected_tat_plant = st.selectbox("🏭 Plant/Source", plant_options, key="tat_plant_filter")
+            else:
+                selected_tat_plant = "All Plants"
         
         with col3:
             if tat_columns['destination_col']:
