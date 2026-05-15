@@ -275,27 +275,19 @@ def _build_destination_alias_map(all_destinations: pd.Series, threshold: float =
     
     return alias_map
 
-# ── Unified Deduplication Logic ───────────────────────────────────────────────
+# ── Trip Report Deduplication Logic ───────────────────────────────────────────
 
-def deduplicate_data(df: pd.DataFrame, 
-                     trip_col: str = "Trip No",
-                     sum_cols: list = None, 
-                     avg_cols: list = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def deduplicate_trip_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    UNIFIED DEDUPLICATION LOGIC:
+    TRIP REPORT DEDUPLICATION:
     - Find duplicate Trip Nos
     - Group all rows with same Trip No into single record
-    - SUM specified columns (e.g., Inv Qty)
-    - AVERAGE specified columns (e.g., TAT stage values)
+    - SUM Inv Qty values
     - Keep first value for all other columns
-    
-    IMPORTANT: Deduplication is ONLY based on Trip No, not on Plant or any other column.
-    This ensures we don't lose records just because they have different plants.
-    
-    Safety check: Only attempts to sum/avg columns that actually exist in the dataframe.
     
     Returns: (deduplicated_df, audit_df)
     """
+    trip_col = "Trip No"
     if trip_col not in df.columns:
         return df, pd.DataFrame()
     
@@ -306,23 +298,10 @@ def deduplicate_data(df: pd.DataFrame,
         alias_map = _build_destination_alias_map(df["Destination"].fillna("Unknown"))
         df["Destination"] = df["Destination"].map(lambda d: alias_map.get(d, d))
     
-    # Clean Trip No format - CRITICAL: Proper string cleaning
+    # Clean Trip No format
     df[trip_col] = df[trip_col].astype(str).str.strip()
-    # Remove .0 suffix if it came from float conversion
     df[trip_col] = df[trip_col].str.replace(r'\.0$', '', regex=True)
-    # Remove any whitespace
     df[trip_col] = df[trip_col].str.strip()
-    
-    # Safety check: Filter sum_cols and avg_cols to only include columns that exist
-    if sum_cols is not None:
-        sum_cols = [col for col in sum_cols if col in df.columns]
-        if not sum_cols:  # If no valid columns remain, set to None
-            sum_cols = None
-    
-    if avg_cols is not None:
-        avg_cols = [col for col in avg_cols if col in df.columns]
-        if not avg_cols:  # If no valid columns remain, set to None
-            avg_cols = None
     
     # Find duplicates based ONLY on Trip No
     duplicated_mask = df.duplicated(subset=[trip_col], keep=False)
@@ -335,15 +314,9 @@ def deduplicate_data(df: pd.DataFrame,
     # Build aggregation dictionary
     agg_dict = {}
     
-    # SUM columns
-    if sum_cols:
-        for col in sum_cols:
-            agg_dict[col] = 'sum'
-    
-    # AVERAGE columns
-    if avg_cols:
-        for col in avg_cols:
-            agg_dict[col] = 'mean'
+    # SUM Inv Qty
+    if "Inv Qty" in df.columns:
+        agg_dict["Inv Qty"] = 'sum'
     
     # All other columns - take first value
     all_other_cols = [c for c in df.columns if c not in agg_dict and c != trip_col]
@@ -359,28 +332,15 @@ def deduplicate_data(df: pd.DataFrame,
         audit_info = {
             "Trip No": trip_no,
             "Original Rows": len(group),
-            "Action": "DEDUPLICATED"
+            "Action": "MERGED - Quantities Summed"
         }
         
-        # Log summed columns
-        if sum_cols:
-            for col in sum_cols:
-                if col in group.columns:
-                    original_vals = "; ".join(group[col].astype(str).tolist())
-                    summed_val = float(group[col].sum())
-                    audit_info[f"{col}_Original"] = original_vals
-                    audit_info[f"{col}_Summed"] = f"{summed_val:.2f}"
+        if "Inv Qty" in group.columns:
+            original_vals = "; ".join(group["Inv Qty"].astype(str).tolist())
+            summed_val = float(group["Inv Qty"].sum())
+            audit_info["Inv Qty_Original"] = original_vals
+            audit_info["Inv Qty_Summed"] = f"{summed_val:.2f}"
         
-        # Log averaged columns  
-        if avg_cols:
-            for col in avg_cols:
-                if col in group.columns:
-                    original_vals = "; ".join(group[col].astype(str).tolist())
-                    avg_val = float(group[col].mean())
-                    audit_info[f"{col}_Original"] = original_vals
-                    audit_info[f"{col}_Averaged"] = f"{avg_val:.2f}"
-        
-        # Log plants if they differ
         if "Plant" in group.columns:
             plants = group["Plant"].unique().tolist()
             if len(plants) > 1:
@@ -393,6 +353,43 @@ def deduplicate_data(df: pd.DataFrame,
     audit_df = pd.DataFrame(audit_records) if audit_records else pd.DataFrame()
     
     return final_df, audit_df
+
+# ── TAT Data Deduplication (DROP duplicates) ─────────────────────────────────
+
+def drop_tat_duplicates(df_tat: pd.DataFrame, trip_col: str = "Trip No") -> tuple[pd.DataFrame, int]:
+    """
+    TAT DATA DEDUPLICATION:
+    - Find duplicate Trip Nos
+    - Keep only the FIRST occurrence of each Trip No
+    - DROP all subsequent duplicates
+    
+    Returns: (deduplicated_df, count_of_dropped_rows)
+    """
+    if trip_col not in df_tat.columns:
+        return df_tat, 0
+    
+    df = df_tat.copy()
+    
+    # Clean Trip No format
+    df[trip_col] = df[trip_col].astype(str).str.strip()
+    df[trip_col] = df[trip_col].str.replace(r'\.0$', '', regex=True)
+    df[trip_col] = df[trip_col].str.strip()
+    
+    # Standardize destination names if column exists
+    if "Destination" in df.columns:
+        alias_map = _build_destination_alias_map(df["Destination"].fillna("Unknown"))
+        df["Destination"] = df["Destination"].map(lambda d: alias_map.get(d, d))
+    
+    # Count rows before dropping
+    rows_before = len(df)
+    
+    # Drop duplicates - keep first occurrence
+    df_deduped = df.drop_duplicates(subset=[trip_col], keep='first')
+    
+    # Count dropped rows
+    rows_dropped = rows_before - len(df_deduped)
+    
+    return df_deduped, rows_dropped
 
 # ── Data Loading Functions ────────────────────────────────────────────────────
 
@@ -455,14 +452,9 @@ def load_files(files_data: list[tuple]) -> dict:
     combined["Month"] = combined["Start Date"].dt.to_period("M").astype(str)
     combined["Trip Type"] = combined["Trip Type"].str.title()
     
-    # Apply deduplication - ONLY sum Inv Qty, deduplicate by Trip No
+    # Apply trip report deduplication - sum Inv Qty, keep first for rest
     rows_before = len(combined)
-    combined, audit_df = deduplicate_data(
-        combined,
-        trip_col="Trip No",
-        sum_cols=["Inv Qty"],  # Sum Inv Qty for trip reports
-        avg_cols=None
-    )
+    combined, audit_df = deduplicate_trip_data(combined)
     removed = rows_before - len(combined)
     
     if removed > 0:
@@ -499,9 +491,9 @@ def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
     return identified
 
 def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
-    """Process TAT data with filters and deduplication."""
+    """Process TAT data with filters and drop duplicates."""
     if df_tat.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame(), 0
     
     df_filtered = df_tat.copy()
     columns = identify_tat_columns(df_tat)
@@ -538,11 +530,10 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
                 if matching_clients:
                     df_filtered = df_filtered[df_filtered[columns['client_col']].isin(matching_clients)]
         
-        # Plant filter - FIX: Only filter when specific plant selected, NOT when "All Plants"
+        # Plant filter - only filter when specific plant selected
         if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
             df_filtered[columns['plant_col']] = df_filtered[columns['plant_col']].astype(str).str.strip()
             df_filtered = df_filtered[df_filtered[columns['plant_col']] == str(filters['plant']).strip()]
-        # When "All Plants" - NO filtering, keep all plants
         
         # Destination filter
         if filters.get('destination') and filters['destination'] != "All Destinations" and columns['destination_col']:
@@ -559,28 +550,13 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
                 ]
     
     if df_filtered.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame(), 0
     
-    # Identify which columns to average (stage columns)
-    stage_col_names = []
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = columns[stage]
-        if col and col in df_filtered.columns:
-            stage_col_names.append(col)
-    
-    # Build sum_cols list with safety check for TAT data
-    tat_sum_cols = ["Inv Qty"] if "Inv Qty" in df_filtered.columns else None
-    
-    # UPDATED: Apply deduplication - sum Inv Qty AND average TAT stages
-    df_deduped, _ = deduplicate_data(
-        df_filtered,
-        trip_col=columns['trip_no_col'],
-        sum_cols=tat_sum_cols,  # Sum Inv Qty for TAT data
-        avg_cols=stage_col_names  # Average the TAT stage values
-    )
+    # Drop duplicates - keep first occurrence of each Trip No
+    df_deduped, rows_dropped = drop_tat_duplicates(df_filtered, columns['trip_no_col'])
     
     if df_deduped.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame()
+        return 0, 0, 0, 0, 0, 0, pd.DataFrame(), 0
     
     total_records = len(df_deduped)
     
@@ -596,7 +572,7 @@ def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
     
     return (
         averages["stage1"], averages["stage2"], averages["stage3"],
-        averages["stage4"], averages["stage5"], total_records, df_deduped
+        averages["stage4"], averages["stage5"], total_records, df_deduped, rows_dropped
     )
 
 def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
@@ -635,27 +611,13 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     """
     Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary.
     Shows breakdown by both client and plant for proper analysis.
+    Duplicates are dropped (first occurrence kept).
     """
     if df_tat.empty:
         return pd.DataFrame()
     
-    # Identify stage columns for averaging
-    stage_col_names = []
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = tat_columns[stage]
-        if col and col in df_tat.columns:
-            stage_col_names.append(col)
-    
-    # Build sum_cols list with safety check
-    tat_sum_cols = ["Inv Qty"] if "Inv Qty" in df_tat.columns else None
-    
-    # UPDATED: Deduplicate by Trip No first (sum Inv Qty, average stage values)
-    df_deduped, _ = deduplicate_data(
-        df_tat,
-        trip_col=tat_columns['trip_no_col'],
-        sum_cols=tat_sum_cols,  # Sum Inv Qty for TAT data
-        avg_cols=stage_col_names
-    )
+    # Drop duplicates - keep first occurrence of each Trip No
+    df_deduped, _ = drop_tat_duplicates(df_tat, tat_columns['trip_no_col'])
     
     if df_deduped.empty:
         return pd.DataFrame()
@@ -711,7 +673,7 @@ def calculate_client_plant_tat_summary(df_tat, tat_columns):
     return summary
 
 def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None):
-    """Get detailed trip-level data for a specific plant."""
+    """Get detailed trip-level data for a specific plant. Duplicates are dropped."""
     df = df_tat.copy()
     
     # Filter by plant - only if specific plant selected
@@ -727,23 +689,8 @@ def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None
     if df.empty:
         return pd.DataFrame()
     
-    # Identify stage columns for averaging
-    stage_col_names = []
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = tat_columns[stage]
-        if col and col in df.columns:
-            stage_col_names.append(col)
-    
-    # Build sum_cols list with safety check
-    tat_sum_cols = ["Inv Qty"] if "Inv Qty" in df.columns else None
-    
-    # UPDATED: Deduplicate (sum Inv Qty, average stage values)
-    df, _ = deduplicate_data(
-        df,
-        trip_col=tat_columns['trip_no_col'],
-        sum_cols=tat_sum_cols,  # Sum Inv Qty for TAT data
-        avg_cols=stage_col_names
-    )
+    # Drop duplicates - keep first occurrence
+    df, _ = drop_tat_duplicates(df, tat_columns['trip_no_col'])
     
     # Calculate stage values
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
@@ -769,7 +716,7 @@ def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None
     if tat_columns['plant_col']:
         result_cols['Plant'] = df[tat_columns['plant_col']]
     
-    # Add Inv Qty if it exists in the dataframe
+    # Add Inv Qty if it exists
     if "Inv Qty" in df.columns:
         result_cols['Inv Qty'] = df['Inv Qty']
     
@@ -839,6 +786,7 @@ def render_tat_report(df_tat, filters=None):
     """Render the complete TAT Analysis Report tab."""
     st.subheader("📊 Turnaround Time (TAT) Analysis Report")
     st.markdown("*Comprehensive analysis of loading and unloading cycle times across plants and clients*")
+    st.markdown("*Note: Duplicate Trip Nos are **dropped** (first occurrence kept).*")
     
     filter_options, tat_columns = get_tat_filter_options(df_tat)
     
@@ -1004,14 +952,14 @@ def render_tat_report(df_tat, filters=None):
     }
     
     # Process TAT data
-    avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_tat_df = process_tat_data(df_tat, tat_filters)
+    avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_tat_df, rows_dropped = process_tat_data(df_tat, tat_filters)
     
     # Calculate totals
     total_loading = avg_stage1 + avg_stage2 + avg_stage3
     total_unloading = avg_stage4 + avg_stage5
     total_tat = total_loading + total_unloading
     
-    # Show active filters
+    # Show active filters and dedup info
     active_filters = []
     if tat_filters['client'] != "All Clients":
         active_filters.append(f"Client: **{selected_tat_client}**")
@@ -1027,7 +975,10 @@ def render_tat_report(df_tat, filters=None):
     if active_filters:
         st.info(f"🔍 **Active Filters:** {' | '.join(active_filters)} | **Unique Trips:** {total_records:,}")
     else:
-        st.info(f"📊 **All Records:** Showing all {total_records:,} unique TAT trips (deduplicated by Trip No)")
+        st.info(f"📊 **All Records:** Showing all {total_records:,} unique TAT trips")
+    
+    if rows_dropped > 0:
+        st.warning(f"🗑️ **{rows_dropped:,} duplicate Trip No(s) dropped** (first occurrence kept)")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -1062,7 +1013,7 @@ def render_tat_report(df_tat, filters=None):
     
     # Detailed TAT Breakdown
     st.markdown("### 📈 Detailed TAT Breakdown")
-    st.markdown("*Each value represents the average time across all unique trips (duplicates averaged per Trip No)*")
+    st.markdown("*Each value represents the average time across all unique trips (duplicates dropped)*")
     
     st.markdown('<div class="tat-container">', unsafe_allow_html=True)
     
@@ -1174,7 +1125,7 @@ def render_tat_report(df_tat, filters=None):
         st.markdown("### 📊 Client / Plant TAT Summary")
         st.markdown(
             "**LOADING TAT (S1+S2+S3) | UNLOADING TAT (S4+S5) | TOTAL TAT (Loading + Unloading)**\n\n"
-            "*Values are averaged across unique trips (duplicates merged by Trip No)*"
+            "*Values are based on unique trips (duplicates dropped, first occurrence kept)*"
         )
         
         summary_df = calculate_client_plant_tat_summary(filtered_tat_df, tat_columns)
@@ -1471,24 +1422,21 @@ if has_trip_data and tab1 is not None:
         with col1:
             selected_client = st.selectbox("🏢 Select Client", client_options, key="client_select_tab1")
         with col2:
-            # Get plants for selected client from the ORIGINAL df (before dedup)
             client_plants = sorted(df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist())
             plant_options = ["All Plants"] + client_plants
             
-            # Use multiselect with proper handling
             selected_plant_input = st.multiselect(
                 "🏭 Select Plant/Source",
                 options=plant_options,
-                default=["All Plants"],  # Default to All Plants
+                default=["All Plants"],
                 placeholder="Pick plants to filter...",
                 key="plant_select_tab1"
             )
             
-            # Proper "All Plants" handling
             if not selected_plant_input or "All Plants" in selected_plant_input:
-                selected_plants = client_plants  # Use ALL plants
+                selected_plants = client_plants
             else:
-                selected_plants = selected_plant_input  # Use selected plants
+                selected_plants = selected_plant_input
             
             if not selected_plants:
                 st.warning("⚠️ No plants found for this client.")
@@ -1695,7 +1643,7 @@ if not has_trip_data and not has_tat_data:
                 <li><strong>Quantity Analysis:</strong> Monitor invoice quantities and trip distribution</li>
                 <li><strong>TAT Analysis:</strong> Measure loading/unloading cycle times across stages</li>
                 <li><strong>Plant Performance:</strong> Compare turnaround times across different plants</li>
-                <li><strong>Deduplication:</strong> Automatic duplicate handling with audit trail</li>
+                <li><strong>Deduplication:</strong> Trip reports sum quantities; TAT drops duplicates</li>
             </ul>
         </div>
     </div>
