@@ -1,1650 +1,1332 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from io import BytesIO
 import plotly.express as px
+import plotly.graph_objects as go
 from difflib import SequenceMatcher
+from datetime import datetime
+import re
+from typing import Dict, List, Tuple, Optional, Any
+import warnings
+warnings.filterwarnings('ignore')
 
 st.set_page_config(
-    page_title="Trip & TAT Analytics Suite | Logistics Performance Dashboard",
+    page_title="Trip & TAT Analytics Suite  | Logistics Performance Dashboard",
     page_icon="🚛",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
-# ── Professional Styling ──────────────────────────────────────────────────────
+# ===================================================================================
+# PROFESSIONAL STYLING
+# ===================================================================================
+
 st.markdown("""
 <style>
-    .main { background-color: #f5f7fa; }
-    .stApp { font-family: 'Segoe UI', sans-serif; }
+    .main { background-color: #f0f2f6; }
+    .stApp { font-family: 'Segoe UI', Roboto, sans-serif; }
     
     /* Metric Cards */
     .metric-card {
         background: white;
-        border-radius: 12px;
-        padding: 20px 24px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-radius: 16px;
+        padding: 20px 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         text-align: center;
-        transition: transform 0.2s;
+        transition: all 0.2s ease;
+        border: 1px solid #e8eaed;
     }
     .metric-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.12);
     }
-    .metric-number { font-size: 2.2rem; font-weight: 700; color: #1a73e8; }
-    .metric-label  { font-size: 0.85rem; color: #666; margin-top: 4px; }
+    .metric-number { font-size: 2rem; font-weight: 700; color: #1a73e8; line-height: 1.2; }
+    .metric-label { font-size: 0.8rem; color: #5f6368; margin-top: 8px; letter-spacing: 0.3px; }
+    .metric-unit { font-size: 0.8rem; color: #5f6368; margin-top: 4px; }
+    
+    /* Status Cards */
+    .status-success { background: #e6f4ea; border-left: 4px solid #34a853; }
+    .status-warning { background: #fef7e0; border-left: 4px solid #fbbc04; }
+    .status-error { background: #fce8e6; border-left: 4px solid #ea4335; }
+    .status-info { background: #e8f0fe; border-left: 4px solid #1a73e8; }
     
     /* Typography */
-    h1 { color: #1a1a2e; font-size: 2.5rem; font-weight: 700; }
-    h2 { color: #1a1a2e; font-size: 1.8rem; }
-    h3 { color: #333; font-size: 1.4rem; }
+    h1 { color: #202124; font-weight: 600; font-size: 1.8rem; }
+    h2 { color: #202124; font-weight: 500; font-size: 1.4rem; }
+    h3 { color: #3c4043; font-weight: 500; font-size: 1.2rem; }
     
     /* Data Display */
-    .stDataFrame { border-radius: 10px; overflow: hidden; }
+    .stDataFrame { border-radius: 12px; overflow: hidden; }
     
     /* Buttons */
-    .stButton button {
-        background: linear-gradient(90deg, #1a73e8, #0d47a1);
+    .stButton > button {
+        background: #1a73e8;
         color: white;
         border: none;
         border-radius: 8px;
         padding: 0.5rem 1rem;
         font-weight: 500;
-        transition: all 0.3s;
+        transition: all 0.2s;
     }
-    .stButton button:hover {
+    .stButton > button:hover {
+        background: #1557b0;
         transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(26,115,232,0.3);
+        box-shadow: 0 2px 8px rgba(26,115,232,0.3);
     }
     
-    /* TAT Visualization Containers */
+    /* TAT Containers */
     .tat-container {
         display: flex;
-        gap: 20px;
+        gap: 24px;
         margin: 20px 0;
         flex-wrap: wrap;
     }
     .tat-column {
         flex: 1;
-        min-width: 300px;
+        min-width: 320px;
         background: white;
-        border-radius: 12px;
-        padding: 0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-radius: 16px;
         overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        border: 1px solid #e8eaed;
     }
     .tat-column-header {
-        padding: 15px 20px;
-        font-weight: 700;
-        font-size: 1.1rem;
+        padding: 16px 20px;
+        font-weight: 600;
+        font-size: 1rem;
         color: white;
         text-align: center;
     }
-    .loading-header { background: linear-gradient(135deg, #1a73e8, #1557b0); }
-    .unloading-header { background: linear-gradient(135deg, #34a853, #2d8f47); }
-    .tat-column-body { padding: 15px 20px; }
+    .loading-header { background: linear-gradient(135deg, #1a73e8, #0d47a1); }
+    .unloading-header { background: linear-gradient(135deg, #34a853, #1b5e20); }
+    .tat-column-body { padding: 16px 20px; }
     
-    /* TAT Stage Rows */
     .tat-stage-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 12px 15px;
+        padding: 12px 0;
         border-bottom: 1px solid #e8eaed;
-        transition: background-color 0.2s;
     }
-    .tat-stage-row:hover { background-color: #f8f9fa; }
     .tat-stage-row:last-child { border-bottom: none; }
     .stage-info { flex: 1; }
-    .stage-name { font-weight: 600; color: #333; font-size: 0.9rem; }
-    .stage-desc { font-size: 0.8rem; color: #666; margin-top: 2px; }
+    .stage-name { font-weight: 600; color: #202124; font-size: 0.9rem; }
+    .stage-desc { font-size: 0.75rem; color: #5f6368; margin-top: 2px; }
     .stage-time { text-align: right; }
-    .stage-minutes { font-weight: 600; color: #333; font-size: 0.95rem; }
-    .stage-hhmm { font-size: 0.85rem; color: #1a73e8; font-weight: 500; }
+    .stage-minutes { font-weight: 600; color: #202124; font-size: 0.9rem; }
+    .stage-hhmm { font-size: 0.8rem; color: #1a73e8; font-weight: 500; }
     
-    /* TAT Totals */
     .tat-total-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 15px 20px;
-        background: #d4edda;
-        border-top: 2px solid #c3e6cb;
-        font-weight: 700;
+        padding: 12px 0;
+        margin-top: 8px;
+        background: #e8f0fe;
+        border-radius: 8px;
+        padding: 12px 16px;
     }
-    .tat-total-label { font-size: 1rem; color: #155724; }
-    .tat-total-time { text-align: right; }
-    .tat-total-minutes { font-size: 1.1rem; color: #155724; font-weight: 700; }
-    .tat-total-hhmm { font-size: 0.95rem; color: #1a73e8; font-weight: 600; }
+    .tat-total-label { font-weight: 700; color: #1a73e8; }
+    .tat-total-minutes { font-weight: 700; color: #1a73e8; font-size: 1rem; }
+    .tat-total-hhmm { font-size: 0.85rem; color: #1557b0; font-weight: 600; }
     
-    /* Grand Total */
     .grand-total-container {
-        background: linear-gradient(135deg, #ffebee, #ffcdd2);
-        border-radius: 12px;
-        padding: 20px 25px;
+        background: linear-gradient(135deg, #fce8e6, #fcd9d6);
+        border-radius: 16px;
+        padding: 20px 24px;
         margin: 20px 0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        border: 2px solid #d32f2f;
+        border: 1px solid #f5c6cb;
     }
-    .grand-total-content {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .grand-total-label { font-size: 1.3rem; font-weight: 700; color: #d32f2f; }
-    .grand-total-time { text-align: right; }
-    .grand-total-minutes { font-size: 1.4rem; font-weight: 700; color: #d32f2f; }
-    .grand-total-hhmm { font-size: 1.6rem; font-weight: 700; color: #b71c1c; }
-    .grand-total-formula { 
-        font-size: 0.85rem; 
-        color: #666; 
-        margin-top: 5px; 
-        text-align: center;
-        background: rgba(255,255,255,0.7);
-        padding: 8px;
-        border-radius: 6px;
-    }
+    .grand-total-label { font-size: 1.2rem; font-weight: 700; color: #c5221f; }
+    .grand-total-minutes { font-size: 1.4rem; font-weight: 700; color: #c5221f; }
+    .grand-total-hhmm { font-size: 1.6rem; font-weight: 700; color: #a50e0e; }
     
-    /* Filters Section */
+    /* Filter Section */
     .filter-section {
         background: white;
         padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-radius: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         margin-bottom: 20px;
+        border: 1px solid #e8eaed;
     }
     
-    /* Summary Tables */
-    .summary-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 15px 0;
-        font-size: 0.85rem;
-    }
-    .summary-table th {
-        background: #1a73e8;
-        color: white;
-        padding: 10px 8px;
-        text-align: center;
-        font-weight: 600;
-        border: 1px solid #1557b0;
-        white-space: nowrap;
-    }
-    .summary-table td {
-        padding: 8px 10px;
-        text-align: center;
-        border: 1px solid #e0e0e0;
-        white-space: nowrap;
-    }
-    .summary-table tr:hover { background-color: #f8f9fa; }
-    .summary-table .header-row th {
-        background: #0d47a1;
-        font-size: 0.85rem;
-    }
-    .summary-table .client-col {
-        text-align: left;
-        font-weight: 500;
-        min-width: 200px;
-    }
-    .summary-table .plant-col {
-        text-align: left;
-        min-width: 150px;
-    }
-    .summary-table .loading-cell {
-        background-color: #e3f2fd;
-        font-weight: 500;
-    }
-    .summary-table .unloading-cell {
-        background-color: #e8f5e9;
-        font-weight: 500;
-    }
-    .summary-table .total-cell {
-        background-color: #fce4ec;
-        font-weight: 700;
-    }
-    .summary-table .grand-total-row {
-        background-color: #f0f0f0 !important;
-        font-weight: 700;
-        border-top: 2px solid #d32f2f;
-    }
-    .summary-table .grand-total-row td {
-        border-top: 2px solid #d32f2f;
-        font-weight: 700;
-    }
-    .summary-table .grand-total-label {
-        text-align: right;
-        font-weight: 700;
-        color: #d32f2f;
+    /* Summary Table */
+    .dataframe-container {
+        overflow-x: auto;
+        border-radius: 12px;
+        border: 1px solid #e8eaed;
+        background: white;
     }
     
-    /* Header Banner */
-    .header-banner {
-        background: linear-gradient(135deg, #1a73e8, #0d47a1);
-        padding: 20px;
+    /* Client-Plant Association Card */
+    .association-card {
+        background: white;
         border-radius: 12px;
-        margin-bottom: 20px;
+        padding: 16px;
+        margin: 10px 0;
+        border-left: 4px solid #1a73e8;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
+    .association-client { font-weight: 700; color: #1a73e8; font-size: 1rem; }
+    .association-plant { color: #34a853; font-weight: 500; }
+    .association-count { color: #5f6368; font-size: 0.8rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Helper Functions ──────────────────────────────────────────────────────────
+# ===================================================================================
+# CONSTANTS & CONFIGURATION
+# ===================================================================================
+
+# Predefined client list for filtering
+PREDEFINED_CLIENTS = [
+    "ARCELORMITTAL NIPPON STEEL INDIA LIMITED",
+    "Dalmia Cement (Bharat)Limited",
+    "Hindustan Zinc Limited",
+    "Jindal Steel and Power Limited",
+    "JSW Steel Limited",
+    "TATA STEEL LIMITED CHENNAI",
+    "TATA STEEL LIMITED"
+]
+
+COLUMN_MAPPING_CONFIG = {
+    "trip_report": {
+        "trip_no": ["Trip No", "Trip Number", "TripID", "Trip Id", "Trip_No"],
+        "client": ["Client", "Customer Name", "Customer", "Client Name", "Customer"],
+        "plant": ["Plant", "Source", "Origin", "Source Plant", "From", "Source Place"],
+        "destination": ["Destination", "Delivery Location", "Unloading Point", "To", "Drop Location"],
+        "trip_type": ["Trip Type", "Trip Category", "Type"],
+        "inv_qty": ["Inv Qty", "Invoice Quantity", "Quantity", "Qty", "Inv_Qty"],
+        "date": ["Start Date", "Trip Date", "Date", "Transaction Date"]
+    },
+    "tat_data": {
+        "trip_no": ["Trip No", "Trip Number", "TripID", "Trip Id"],
+        "client": ["Client", "Customer Name", "Customer", "Client Name"],
+        "plant": ["Plant", "Source Plant", "Origin Plant", "Source", "Source Place", "Origin"],
+        "destination": ["Destination", "Unloading Point", "Delivery Location"],
+        "stage_do_receipt": ["Actual DO Receipt (Mins)", "DO Receipt (Mins)", "Actual DO Receipt", "DO Receipt"],
+        "stage_gate_in_load": ["Actual Gate In(Mins)", "Gate In (Mins)", "Actual Gate In", "Gate In"],
+        "stage_loaded_exit": ["Actual Loaded Exit(Mins)", "Loaded Exit (Mins)", "Actual Loaded Exit", "Loaded Exit"],
+        "stage_gate_in_unload": ["Actual Gate In for Unloading(Mins)", "Gate In for Unloading (Mins)", "Gate In Unloading"],
+        "stage_unloaded": ["Actual Unloaded (Mins)", "Unloaded (Mins)", "Actual Unloaded"],
+        "date": ["Date", "Transaction Date", "Trip Date"]
+    }
+}
+
+# ===================================================================================
+# HELPER FUNCTIONS
+# ===================================================================================
 
 def minutes_to_hhmm(minutes: float) -> str:
-    """Convert minutes to HH:MM format."""
-    if pd.isna(minutes) or minutes < 0: 
+    """Convert minutes to HH:MM format with proper null handling."""
+    if pd.isna(minutes) or minutes < 0:
         return "00:00"
-    total_minutes = int(round(minutes))
-    hours = total_minutes // 60
-    mins = total_minutes % 60
+    hours = int(minutes // 60)
+    mins = int(minutes % 60)
     return f"{hours:02d}:{mins:02d}"
 
-def _normalize(name: str) -> str:
-    """Normalize destination names for fuzzy matching."""
-    import re
-    name = str(name).lower().strip()
-    name = re.sub(r"[^\w\s]", "", name)
-    name = re.sub(r"\s+", " ", name)
-    return name
+def normalize_text(series: pd.Series) -> pd.Series:
+    """Standardize text for consistent matching."""
+    return (series
+        .astype(str)
+        .str.upper()
+        .str.strip()
+        .str.replace(r'\s+', ' ', regex=True)
+        .str.replace(r'[^\w\s-]', '', regex=True)
+        .replace('NAN', 'UNKNOWN')
+        .replace('', 'UNKNOWN')
+    )
 
-def _similar(a: str, b: str, threshold: float = 0.82) -> bool:
-    """Check if two destination names are similar."""
-    na, nb = _normalize(a), _normalize(b)
-    if na == nb: 
-        return True
-    return SequenceMatcher(None, na, nb).ratio() >= threshold
-
-def _build_destination_alias_map(all_destinations: pd.Series, threshold: float = 0.82) -> dict:
-    """Build mapping of destination name variants to canonical names."""
-    unique_dests = all_destinations.dropna().unique().tolist()
-    clusters = []
+def detect_columns(df: pd.DataFrame, data_type: str) -> Dict[str, str]:
+    """Dynamically detect column names based on configuration."""
+    detected = {}
+    config = COLUMN_MAPPING_CONFIG[data_type]
     
-    for dest in unique_dests:
-        placed = False
-        for cluster in clusters:
-            if _similar(dest, cluster[0], threshold):
-                cluster.append(dest)
-                placed = True
+    for target, possibilities in config.items():
+        found = None
+        for col in df.columns:
+            col_normalized = col.lower().strip()
+            for poss in possibilities:
+                if poss.lower() == col_normalized:
+                    found = col
+                    break
+            if found:
                 break
-        if not placed:
-            clusters.append([dest])
+        detected[target] = found
     
-    alias_map = {}
-    for cluster in clusters:
-        canonical = max(cluster, key=len)
-        for variant in cluster:
-            alias_map[variant] = canonical
-    
-    return alias_map
+    return detected
 
-# ── Trip Report Deduplication Logic ───────────────────────────────────────────
+def validate_date_parsing(df: pd.DataFrame, date_col: str) -> Tuple[pd.Series, List[str]]:
+    """Robust date parsing with multiple format detection."""
+    if date_col not in df.columns:
+        return pd.Series([pd.NaT] * len(df)), ["Date column not found"]
+    
+    errors = []
+    date_series = pd.Series([pd.NaT] * len(df))
+    
+    # Try different date formats
+    formats = ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y', '%d.%m.%Y', '%Y/%m/%d']
+    
+    for fmt in formats:
+        try:
+            parsed = pd.to_datetime(df[date_col], format=fmt, errors='coerce')
+            if parsed.notna().sum() > date_series.notna().sum():
+                date_series = parsed
+        except:
+            continue
+    
+    # If still failing, let pandas auto-detect
+    if date_series.isna().all():
+        date_series = pd.to_datetime(df[date_col], errors='coerce')
+    
+    error_count = date_series.isna().sum()
+    if error_count > 0:
+        errors.append(f"{error_count} dates could not be parsed")
+    
+    return date_series, errors
 
-def deduplicate_trip_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    TRIP REPORT DEDUPLICATION:
-    - Find duplicate Trip Nos
-    - Group all rows with same Trip No into single record
-    - SUM Inv Qty values
-    - Keep first value for all other columns
+# ===================================================================================
+# CLIENT-PLANT ASSOCIATION (Critical for TAT Source Column)
+# ===================================================================================
+
+class ClientPlantAssociation:
+    """Manages the association between clients and plants from TAT Source column."""
     
-    Returns: (deduplicated_df, audit_df)
-    """
-    trip_col = "Trip No"
-    if trip_col not in df.columns:
-        return df, pd.DataFrame()
+    def __init__(self):
+        self.client_plant_map = {}  # client -> set of plants
+        self.plant_client_map = {}  # plant -> set of clients
+        self.association_df = pd.DataFrame()
     
+    def build_from_tat_data(self, tat_df: pd.DataFrame):
+        """Build client-plant associations from TAT data using Source/Plant column."""
+        if tat_df.empty:
+            return
+        
+        df = tat_df.copy()
+        
+        # Ensure client and plant columns exist
+        if 'client' not in df.columns or 'plant' not in df.columns:
+            return
+        
+        # Get unique client-plant pairs
+        associations = df[['client', 'plant']].drop_duplicates()
+        
+        # Build maps
+        for _, row in associations.iterrows():
+            client = row['client']
+            plant = row['plant']
+            
+            if client not in self.client_plant_map:
+                self.client_plant_map[client] = set()
+            self.client_plant_map[client].add(plant)
+            
+            if plant not in self.plant_client_map:
+                self.plant_client_map[plant] = set()
+            self.plant_client_map[plant].add(client)
+        
+        # Create association dataframe
+        self.association_df = associations.copy()
+        self.association_df.columns = ['Client', 'Plant (from TAT Source)']
+        
+        # Add trip counts
+        trip_counts = df.groupby(['client', 'plant']).size().reset_index(name='Trip Count')
+        self.association_df = self.association_df.merge(trip_counts, left_on=['Client', 'Plant (from TAT Source)'], 
+                                                         right_on=['client', 'plant'], how='left')
+        self.association_df = self.association_df.drop(columns=['client', 'plant'])
+        self.association_df = self.association_df.sort_values(['Client', 'Trip Count'], ascending=[True, False])
+    
+    def get_plants_for_client(self, client: str) -> List[str]:
+        """Get all plants associated with a specific client."""
+        if client in self.client_plant_map:
+            return sorted(list(self.client_plant_map[client]))
+        return []
+    
+    def get_clients_for_plant(self, plant: str) -> List[str]:
+        """Get all clients associated with a specific plant."""
+        if plant in self.plant_client_map:
+            return sorted(list(self.plant_client_map[plant]))
+        return []
+    
+    def is_valid_association(self, client: str, plant: str) -> bool:
+        """Check if a client-plant pair is valid based on TAT data."""
+        return plant in self.client_plant_map.get(client, set())
+    
+    def render_association_summary(self):
+        """Display the client-plant association summary."""
+        if self.association_df.empty:
+            st.info("No client-plant associations found. Upload TAT data with Source/Plant column.")
+            return
+        
+        st.markdown("### 🔗 Client-Plant Associations (from TAT Source Column)")
+        st.caption("These associations are automatically derived from your TAT data. Plants are linked to clients based on actual trip records.")
+        
+        # Summary stats
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Clients", len(self.client_plant_map))
+        with col2:
+            st.metric("Total Plants/Sources", len(self.plant_client_map))
+        with col3:
+            total_associations = len(self.association_df)
+            st.metric("Client-Plant Pairs", total_associations)
+        
+        # Display association table
+        with st.expander("📋 View All Client-Plant Associations", expanded=False):
+            st.dataframe(
+                self.association_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Client": st.column_config.TextColumn("Client", width="medium"),
+                    "Plant (from TAT Source)": st.column_config.TextColumn("Plant/Source", width="medium"),
+                    "Trip Count": st.column_config.NumberColumn("Number of Trips", format="%d")
+                }
+            )
+        
+        return self.association_df
+
+# ===================================================================================
+# DATA LOADING & DEDUPLICATION
+# ===================================================================================
+
+def load_trip_reports(files_data: List[Tuple[str, bytes]]) -> Dict[str, Any]:
+    """Load and process multiple trip report files with deduplication."""
+    messages = []
+    all_frames = []
+    
+    for filename, data in files_data:
+        try:
+            df = pd.read_excel(BytesIO(data), sheet_name=0)
+            detected_cols = detect_columns(df, "trip_report")
+            
+            # Validate required columns
+            required = ['trip_no', 'client', 'destination']
+            missing = [r for r in required if not detected_cols.get(r)]
+            
+            if missing:
+                messages.append({
+                    "type": "warning",
+                    "text": f"⚠️ **{filename}** missing columns: {missing}. Skipping."
+                })
+                continue
+            
+            # Rename columns to standard names
+            rename_map = {v: k for k, v in detected_cols.items() if v}
+            df = df.rename(columns=rename_map)
+            
+            # Handle date column
+            if detected_cols.get('date'):
+                df['date_parsed'], date_errors = validate_date_parsing(df, 'date')
+                if date_errors:
+                    messages.append({
+                        "type": "info",
+                        "text": f"📅 **{filename}**: {date_errors[0]}"
+                    })
+            else:
+                df['date_parsed'] = pd.NaT
+            
+            # Handle invoice quantity
+            if 'inv_qty' not in df.columns:
+                df['inv_qty'] = 0.0
+            else:
+                df['inv_qty'] = pd.to_numeric(df['inv_qty'], errors='coerce').fillna(0)
+            
+            # Handle trip type
+            if 'trip_type' not in df.columns:
+                df['trip_type'] = 'Loaded'
+            else:
+                df['trip_type'] = df['trip_type'].astype(str).str.title()
+            
+            # Handle plant/source
+            if 'plant' not in df.columns:
+                df['plant'] = 'UNKNOWN_PLANT'
+            else:
+                df['plant'] = normalize_text(df['plant'])
+            
+            # Normalize text columns
+            df['client'] = normalize_text(df['client'])
+            df['destination'] = normalize_text(df['destination'])
+            df['trip_no'] = normalize_text(df['trip_no'])
+            
+            # Mark empty trips
+            empty_mask = df['trip_type'].str.lower() == 'empty'
+            df.loc[empty_mask & (df['client'] == 'UNKNOWN'), 'client'] = 'EMPTY_TRIP'
+            
+            df['_source_file'] = filename
+            all_frames.append(df)
+            
+            messages.append({
+                "type": "success",
+                "text": f"✅ Loaded **{filename}**: {len(df):,} records"
+            })
+            
+        except Exception as e:
+            messages.append({
+                "type": "error",
+                "text": f"❌ Could not read **{filename}**: {str(e)}"
+            })
+    
+    if not all_frames:
+        return {"df": pd.DataFrame(), "audit_df": pd.DataFrame(), "messages": messages}
+    
+    # Combine all files
+    combined = pd.concat(all_frames, ignore_index=True)
+    
+    # Create month column
+    combined['month'] = combined['date_parsed'].dt.to_period('M').astype(str)
+    
+    # Apply deduplication
+    combined, audit_df = deduplicate_trip_data_v2(combined)
+    
+    messages.append({
+        "type": "success",
+        "text": f"📊 Total unique trips after deduplication: {len(combined):,}"
+    })
+    
+    return {"df": combined, "audit_df": audit_df, "messages": messages}
+
+def deduplicate_trip_data_v2(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Enhanced deduplication that validates consistency before merging.
+    Groups by Trip No, sums quantities, validates consistency.
+    """
     df = df.copy()
     
-    # Standardize destination names if column exists
-    if "Destination" in df.columns:
-        alias_map = _build_destination_alias_map(df["Destination"].fillna("Unknown"))
-        df["Destination"] = df["Destination"].map(lambda d: alias_map.get(d, d))
+    if 'trip_no' not in df.columns:
+        return df, pd.DataFrame()
     
-    # Clean Trip No format
-    df[trip_col] = df[trip_col].astype(str).str.strip()
-    df[trip_col] = df[trip_col].str.replace(r'\.0$', '', regex=True)
-    df[trip_col] = df[trip_col].str.strip()
-    
-    # Find duplicates based ONLY on Trip No
-    duplicated_mask = df.duplicated(subset=[trip_col], keep=False)
-    unique_df = df[~duplicated_mask].copy()
-    dup_df = df[duplicated_mask].copy()
+    # Find duplicates
+    dup_mask = df.duplicated(subset=['trip_no'], keep=False)
+    unique_df = df[~dup_mask].copy()
+    dup_df = df[dup_mask].copy()
     
     if dup_df.empty:
         return df, pd.DataFrame()
     
-    # Build aggregation dictionary
-    agg_dict = {}
-    
-    # SUM Inv Qty
-    if "Inv Qty" in df.columns:
-        agg_dict["Inv Qty"] = 'sum'
-    
-    # All other columns - take first value
-    all_other_cols = [c for c in df.columns if c not in agg_dict and c != trip_col]
-    for col in all_other_cols:
-        agg_dict[col] = 'first'
-    
-    # Group by Trip No ONLY
-    merged = dup_df.groupby(trip_col, as_index=False).agg(agg_dict)
-    
-    # Create audit trail
     audit_records = []
-    for trip_no, group in dup_df.groupby(trip_col):
-        audit_info = {
-            "Trip No": trip_no,
-            "Original Rows": len(group),
-            "Action": "MERGED - Quantities Summed"
+    merged_records = []
+    
+    for trip_no, group in dup_df.groupby('trip_no'):
+        validation_issues = []
+        
+        # Validate client consistency
+        if group['client'].nunique() > 1:
+            validation_issues.append(f"multi_client:{'|'.join(group['client'].unique())}")
+        
+        # Validate destination consistency
+        if group['destination'].nunique() > 1:
+            validation_issues.append(f"multi_dest:{'|'.join(group['destination'].unique())}")
+        
+        # Validate plant consistency
+        if group['plant'].nunique() > 1:
+            validation_issues.append(f"multi_plant:{'|'.join(group['plant'].unique())}")
+        
+        # Create merged record
+        merged = {
+            'trip_no': trip_no,
+            'client': group['client'].mode()[0] if not group['client'].mode().empty else group['client'].iloc[0],
+            'destination': group['destination'].mode()[0] if not group['destination'].mode().empty else group['destination'].iloc[0],
+            'plant': group['plant'].mode()[0] if not group['plant'].mode().empty else group['plant'].iloc[0],
+            'inv_qty': group['inv_qty'].sum(),
+            'trip_type': 'Loaded' if group['inv_qty'].sum() > 0 else group['trip_type'].mode()[0],
+            'date_parsed': group['date_parsed'].min() if group['date_parsed'].notna().any() else pd.NaT,
+            '_source_file': group['_source_file'].iloc[0],
+            '_validation_issues': '; '.join(validation_issues) if validation_issues else 'OK'
         }
         
-        if "Inv Qty" in group.columns:
-            original_vals = "; ".join(group["Inv Qty"].astype(str).tolist())
-            summed_val = float(group["Inv Qty"].sum())
-            audit_info["Inv Qty_Original"] = original_vals
-            audit_info["Inv Qty_Summed"] = f"{summed_val:.2f}"
-        
-        if "Plant" in group.columns:
-            plants = group["Plant"].unique().tolist()
-            if len(plants) > 1:
-                audit_info["Plants_Found"] = "; ".join(plants)
-        
-        audit_records.append(audit_info)
+        merged_records.append(merged)
+        audit_records.append({
+            'trip_no': trip_no,
+            'original_rows': len(group),
+            'inv_qty_summed': group['inv_qty'].sum(),
+            'validation_issues': merged['_validation_issues']
+        })
     
-    # Combine unique and merged records
-    final_df = pd.concat([unique_df, merged], ignore_index=True)
+    # Combine unique and merged
+    merged_df = pd.DataFrame(merged_records)
+    final_df = pd.concat([unique_df, merged_df], ignore_index=True)
+    
+    # Ensure all columns are present
+    for col in unique_df.columns:
+        if col not in final_df.columns:
+            final_df[col] = None
+    
     audit_df = pd.DataFrame(audit_records) if audit_records else pd.DataFrame()
     
-    return final_df, audit_df
+    return final_df[unique_df.columns], audit_df
 
-# ── TAT Data Deduplication (DROP duplicates) ─────────────────────────────────
-
-def drop_tat_duplicates(df_tat: pd.DataFrame, trip_col: str = "Trip No") -> tuple[pd.DataFrame, int]:
-    """
-    TAT DATA DEDUPLICATION:
-    - Find duplicate Trip Nos
-    - Keep only the FIRST occurrence of each Trip No
-    - DROP all subsequent duplicates
-    
-    Returns: (deduplicated_df, count_of_dropped_rows)
-    """
-    if trip_col not in df_tat.columns:
-        return df_tat, 0
-    
-    df = df_tat.copy()
-    
-    # Clean Trip No format
-    df[trip_col] = df[trip_col].astype(str).str.strip()
-    df[trip_col] = df[trip_col].str.replace(r'\.0$', '', regex=True)
-    df[trip_col] = df[trip_col].str.strip()
-    
-    # Standardize destination names if column exists
-    if "Destination" in df.columns:
-        alias_map = _build_destination_alias_map(df["Destination"].fillna("Unknown"))
-        df["Destination"] = df["Destination"].map(lambda d: alias_map.get(d, d))
-    
-    # Count rows before dropping
-    rows_before = len(df)
-    
-    # Drop duplicates - keep first occurrence
-    df_deduped = df.drop_duplicates(subset=[trip_col], keep='first')
-    
-    # Count dropped rows
-    rows_dropped = rows_before - len(df_deduped)
-    
-    return df_deduped, rows_dropped
-
-# ── Data Loading Functions ────────────────────────────────────────────────────
-
-@st.cache_data
-def load_tat_file(tat_file_data):
-    """Load and validate TAT data file."""
+def load_tat_data(file_data: bytes) -> Tuple[pd.DataFrame, Dict, List[str], ClientPlantAssociation]:
+    """Load TAT data with dynamic column detection and build client-plant associations."""
     try:
-        df_tat = pd.read_excel(BytesIO(tat_file_data), sheet_name=0)
-        return df_tat, None
+        df = pd.read_excel(BytesIO(file_data), sheet_name=0)
+        detected_cols = detect_columns(df, "tat_data")
+        
+        messages = []
+        
+        # Check for required columns
+        required = ['trip_no', 'client']
+        missing = [r for r in required if not detected_cols.get(r)]
+        
+        if missing:
+            return pd.DataFrame(), detected_cols, [f"Missing required columns: {missing}"], ClientPlantAssociation()
+        
+        # Rename columns
+        rename_map = {v: k for k, v in detected_cols.items() if v}
+        df = df.rename(columns=rename_map)
+        
+        # Normalize text columns
+        df['client'] = normalize_text(df['client'])
+        df['trip_no'] = normalize_text(df['trip_no'])
+        
+        # CRITICAL: Handle Plant/Source column from TAT report
+        if 'plant' in df.columns:
+            df['plant'] = normalize_text(df['plant'])
+            messages.append(f"✅ Found Plant/Source column: '{detected_cols.get('plant', 'plant')}'")
+        else:
+            df['plant'] = 'UNKNOWN_SOURCE'
+            messages.append("⚠️ No Plant/Source column found. Using 'UNKNOWN_SOURCE'")
+        
+        if 'destination' in df.columns:
+            df['destination'] = normalize_text(df['destination'])
+        else:
+            df['destination'] = 'UNKNOWN'
+        
+        # Handle date column
+        if detected_cols.get('date'):
+            df['date_parsed'], date_errors = validate_date_parsing(df, 'date')
+            if date_errors:
+                messages.append(date_errors[0])
+        else:
+            df['date_parsed'] = pd.NaT
+        
+        # Convert stage columns to numeric (keep NaN for missing data)
+        stage_columns = ['stage_do_receipt', 'stage_gate_in_load', 'stage_loaded_exit', 
+                        'stage_gate_in_unload', 'stage_unloaded']
+        
+        for stage in stage_columns:
+            if stage in df.columns:
+                df[stage] = pd.to_numeric(df[stage], errors='coerce')
+            else:
+                df[stage] = np.nan
+        
+        # Calculate TAT metrics (only where data exists)
+        df['loading_tat'] = df['stage_do_receipt'] + df['stage_gate_in_load'] + df['stage_loaded_exit']
+        df['unloading_tat'] = df['stage_gate_in_unload'] + df['stage_unloaded']
+        df['total_tat'] = df['loading_tat'] + df['unloading_tat']
+        
+        # Build client-plant associations from TAT data
+        association = ClientPlantAssociation()
+        association.build_from_tat_data(df)
+        
+        messages.append(f"📊 Built {len(association.association_df)} client-plant associations")
+        
+        return df, detected_cols, messages, association
+        
     except Exception as e:
-        return pd.DataFrame(), str(e)
+        return pd.DataFrame(), {}, [f"Error loading TAT file: {str(e)}"], ClientPlantAssociation()
 
-@st.cache_data
-def load_files(files_data: list[tuple]) -> dict:
-    """Load, clean, and deduplicate trip report files."""
-    messages = []
-    frames = []
-    
-    for name, data in files_data:
-        try:
-            df = pd.read_excel(BytesIO(data), sheet_name=0)
-            missing = {"Client", "Destination", "Start Date", "Trip No", "Trip Type"} - set(df.columns)
-            
-            if missing:
-                messages.append(("warning", f"⚠️ **{name}** is missing columns: {missing}. Skipping."))
-                continue
-            
-            # Handle empty trips
-            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"].isna()), "Client"] = "EMPTY TRIP - NO CLIENT"
-            df.loc[(df["Trip Type"].str.lower() == "empty") & (df["Client"] == ""), "Client"] = "EMPTY TRIP - NO CLIENT"
-            
-            # Identify source/plant column
-            source_col = next((c for c in ["Source", "Source Place", "Plant", "Origin", "From"] if c in df.columns), None)
-            if source_col:
-                df["Plant"] = df[source_col].fillna("Unknown")
-            else:
-                df["Plant"] = "All Plants"
-                messages.append(("info", f"📌 **{name}** has no Source/Plant column. Using 'All Plants'."))
-            
-            # Handle invoice quantity
-            if "Inv Qty" not in df.columns:
-                df["Inv Qty"] = 0.0
-                messages.append(("info", f"📌 **{name}** has no 'Inv Qty' column. Using 0."))
-            else:
-                df["Inv Qty"] = pd.to_numeric(df["Inv Qty"], errors="coerce").fillna(0).astype(float)
-            
-            df["_source_file"] = name
-            df["Source File"] = name
-            frames.append(df)
-            
-        except Exception as e:
-            messages.append(("error", f"Could not read **{name}**: {e}"))
-    
-    if not frames:
-        return {"df": pd.DataFrame(), "audit_df": pd.DataFrame(), "messages": messages}
-    
-    # Combine all files
-    combined = pd.concat(frames, ignore_index=True)
-    combined["Start Date"] = pd.to_datetime(combined["Start Date"], dayfirst=True, errors="coerce")
-    combined["Month"] = combined["Start Date"].dt.to_period("M").astype(str)
-    combined["Trip Type"] = combined["Trip Type"].str.title()
-    
-    # Apply trip report deduplication - sum Inv Qty, keep first for rest
-    rows_before = len(combined)
-    combined, audit_df = deduplicate_trip_data(combined)
-    removed = rows_before - len(combined)
-    
-    if removed > 0:
-        messages.append(("dedup", f"🔁 Deduplication merged **{removed:,}** duplicate trip(s) into unique records with summed quantities."))
-    
-    return {"df": combined, "audit_df": audit_df, "messages": messages}
+# ===================================================================================
+# CLIENT MAPPING (Trip Report ↔ TAT Data)
+# ===================================================================================
 
-# ── TAT Processing Functions ─────────────────────────────────────────────────
-
-def identify_tat_columns(df_tat: pd.DataFrame) -> dict:
-    """Identify TAT-related columns from the dataset."""
-    col_mapping = {
-        "client_col": ["Client", "Customer", "Client Name", "Customer Name"],
-        "plant_col": ["Plant", "Source Plant", "Source", "Plant Name", "Origin"],
-        "trip_no_col": ["Trip No", "Trip Number", "TripNo", "Trip ID"],
-        "destination_col": ["Destination", "To", "Delivery Location", "Unloading Point", "Drop Location"],
-        "stage1": ["Actual DO Receipt (Mins)", "DO Receipt (Mins)", "Actual DO Receipt"],
-        "stage2": ["Actual Gate In(Mins)", "Gate In (Mins)", "Actual Gate In"],
-        "stage3": ["Actual Loaded Exit(Mins)", "Loaded Exit (Mins)", "Actual Loaded Exit"],
-        "stage4": ["Actual Gate In for Unloading(Mins)", "Gate In for Unloading (Mins)", "Actual Gate In for Unloading"],
-        "stage5": ["Actual Unloaded (Mins)", "Unloaded (Mins)", "Actual Unloaded"],
-        "date_col": ["Date", "Start Date", "Trip Date", "Transaction Date"],
-    }
+def create_client_mapping(trip_df: pd.DataFrame, tat_df: pd.DataFrame, threshold: float = 0.85) -> Dict[str, str]:
+    """Create fuzzy mapping between client names in Trip Report and TAT data."""
+    if trip_df.empty or tat_df.empty:
+        return {}
     
-    identified = {}
-    for key, possible_names in col_mapping.items():
-        found_col = None
-        for name in possible_names:
-            if name in df_tat.columns:
-                found_col = name
-                break
-        identified[key] = found_col
+    trip_clients = trip_df['client'].dropna().unique().tolist()
+    tat_clients = tat_df['client'].dropna().unique().tolist()
     
-    return identified
-
-def process_tat_data(df_tat: pd.DataFrame, filters: dict = None) -> tuple:
-    """Process TAT data with filters and drop duplicates."""
-    if df_tat.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame(), 0
+    mapping = {}
     
-    df_filtered = df_tat.copy()
-    columns = identify_tat_columns(df_tat)
-    
-    # Apply filters
-    if filters:
-        # Trip number filter
-        if filters.get('trip_nos') and columns['trip_no_col']:
-            trip_nos_str = [str(t).strip() for t in filters['trip_nos']]
-            df_filtered[columns['trip_no_col']] = (
-                df_filtered[columns['trip_no_col']]
-                .astype(str)
-                .str.strip()
-                .str.replace(r'\.0$', '', regex=True)
-            )
-            df_filtered = df_filtered[df_filtered[columns['trip_no_col']].isin(trip_nos_str)]
+    for trip_client in trip_clients:
+        if trip_client in ['EMPTY_TRIP', 'UNKNOWN']:
+            mapping[trip_client] = trip_client
+            continue
         
-        # Client filter with exact match priority
-        if filters.get('client') and filters['client'] != "All Clients" and columns['client_col']:
-            client_search = str(filters['client']).strip().upper()
-            df_filtered[columns['client_col']] = (
-                df_filtered[columns['client_col']]
-                .astype(str)
-                .str.upper()
-                .str.strip()
-            )
-            
-            exact_mask = df_filtered[columns['client_col']] == client_search
-            if exact_mask.any():
-                df_filtered = df_filtered[exact_mask]
-            else:
-                all_clients = df_filtered[columns['client_col']].unique()
-                matching_clients = [c for c in all_clients if client_search in c]
-                if matching_clients:
-                    df_filtered = df_filtered[df_filtered[columns['client_col']].isin(matching_clients)]
+        # Try exact match first
+        if trip_client in tat_clients:
+            mapping[trip_client] = trip_client
+            continue
         
-        # Plant filter - only filter when specific plant selected
-        if filters.get('plant') and filters['plant'] != "All Plants" and columns['plant_col']:
-            df_filtered[columns['plant_col']] = df_filtered[columns['plant_col']].astype(str).str.strip()
-            df_filtered = df_filtered[df_filtered[columns['plant_col']] == str(filters['plant']).strip()]
+        # Try fuzzy match
+        best_match = None
+        best_score = 0
         
-        # Destination filter
-        if filters.get('destination') and filters['destination'] != "All Destinations" and columns['destination_col']:
-            df_filtered = df_filtered[df_filtered[columns['destination_col']] == filters['destination']]
+        for tat_client in tat_clients:
+            score = SequenceMatcher(None, trip_client, tat_client).ratio()
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = tat_client
         
-        # Date range filter
-        if filters.get('date_range') and columns['date_col']:
-            start_date, end_date = filters['date_range']
-            if start_date and end_date:
-                date_series = pd.to_datetime(df_filtered[columns['date_col']], errors='coerce')
-                df_filtered = df_filtered[
-                    (date_series >= pd.Timestamp(start_date)) & 
-                    (date_series <= pd.Timestamp(end_date))
-                ]
-    
-    if df_filtered.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame(), 0
-    
-    # Drop duplicates - keep first occurrence of each Trip No
-    df_deduped, rows_dropped = drop_tat_duplicates(df_filtered, columns['trip_no_col'])
-    
-    if df_deduped.empty:
-        return 0, 0, 0, 0, 0, 0, pd.DataFrame(), 0
-    
-    total_records = len(df_deduped)
-    
-    # Calculate average values for each TAT stage
-    averages = {}
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = columns[stage]
-        if col and col in df_deduped.columns:
-            avg_val = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0).mean()
-            averages[stage] = avg_val if not pd.isna(avg_val) else 0
+        if best_match:
+            mapping[trip_client] = best_match
         else:
-            averages[stage] = 0
+            mapping[trip_client] = trip_client
     
-    return (
-        averages["stage1"], averages["stage2"], averages["stage3"],
-        averages["stage4"], averages["stage5"], total_records, df_deduped, rows_dropped
-    )
+    return mapping
 
-def get_tat_filter_options(df_tat: pd.DataFrame) -> dict:
-    """Get available filter options from TAT data."""
-    columns = identify_tat_columns(df_tat)
-    options = {}
-    
-    if columns['client_col']:
-        clients = sorted(df_tat[columns['client_col']].dropna().unique().tolist())
-        options['clients'] = ["All Clients"] + clients
-    else:
-        options['clients'] = ["All Clients"]
-    
-    if columns['plant_col']:
-        plants = sorted(df_tat[columns['plant_col']].dropna().unique().tolist())
-        options['plants'] = ["All Plants"] + plants
-    else:
-        options['plants'] = ["All Plants"]
-    
-    if columns['destination_col']:
-        destinations = sorted(df_tat[columns['destination_col']].dropna().unique().tolist())
-        options['destinations'] = ["All Destinations"] + destinations
-    else:
-        options['destinations'] = ["All Destinations"]
-    
-    if columns['date_col']:
-        date_series = pd.to_datetime(df_tat[columns['date_col']], errors='coerce')
-        options['min_date'] = date_series.min().date() if not pd.isna(date_series.min()) else None
-        options['max_date'] = date_series.max().date() if not pd.isna(date_series.max()) else None
-    else:
-        options['min_date'], options['max_date'] = None, None
-    
-    return options, columns
+# ===================================================================================
+# TAT PROCESSING & FILTERING (With Client-Plant Association)
+# ===================================================================================
 
-def calculate_client_plant_tat_summary(df_tat, tat_columns):
+def apply_tat_filters(df: pd.DataFrame, filters: Dict, association: ClientPlantAssociation) -> pd.DataFrame:
+    """Apply filters to TAT data with client-plant association validation."""
+    if df.empty:
+        return df
+    
+    df_filtered = df.copy()
+    
+    # Filter by trip numbers (from Trip Report)
+    if filters.get('trip_nos'):
+        trip_nos_norm = [normalize_text(pd.Series([t]))[0] for t in filters['trip_nos']]
+        df_filtered = df_filtered[df_filtered['trip_no'].isin(trip_nos_norm)]
+    
+    # Filter by client
+    if filters.get('client_names') and len(filters['client_names']) > 0:
+        client_norm = [normalize_text(pd.Series([c]))[0] for c in filters['client_names']]
+        df_filtered = df_filtered[df_filtered['client'].isin(client_norm)]
+    
+    # Filter by plant - if "All Plants" selected, include ALL plants for that client
+    if filters.get('plant') and filters['plant'] not in ['All Plants', 'ALL_PLANTS', 'ALL_SOURCES', 'All Plants/Sources', None]:
+        plant_norm = normalize_text(pd.Series([filters['plant']]))[0]
+        df_filtered = df_filtered[df_filtered['plant'] == plant_norm]
+    # If "All Plants/Sources" is selected, keep all plants (no filter)
+    
+    # Filter by destination
+    if filters.get('destination') and filters['destination'] not in ['All Destinations', None]:
+        dest_norm = normalize_text(pd.Series([filters['destination']]))[0]
+        df_filtered = df_filtered[df_filtered['destination'] == dest_norm]
+    
+    # Filter by date range
+    if filters.get('date_range'):
+        start_date, end_date = filters['date_range']
+        if start_date and end_date:
+            df_filtered = df_filtered[
+                (df_filtered['date_parsed'] >= pd.Timestamp(start_date)) &
+                (df_filtered['date_parsed'] <= pd.Timestamp(end_date))
+            ]
+    
+    return df_filtered
+
+def calculate_tat_summary(df: pd.DataFrame, association: ClientPlantAssociation = None) -> pd.DataFrame:
     """
-    Calculate Client | Plant | Loading TAT | Unloading TAT | Total TAT summary.
-    Shows breakdown by both client and plant for proper analysis.
-    Duplicates are dropped (first occurrence kept).
+    Calculate Client | Plant (from TAT Source) | Loading TAT | Unloading TAT | Total TAT summary.
+    Uses the actual Source/Plant column from TAT data.
     """
-    if df_tat.empty:
-        return pd.DataFrame()
-    
-    # Drop duplicates - keep first occurrence of each Trip No
-    df_deduped, _ = drop_tat_duplicates(df_tat, tat_columns['trip_no_col'])
-    
-    if df_deduped.empty:
-        return pd.DataFrame()
-    
-    # Calculate stage values
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = tat_columns[stage]
-        if col and col in df_deduped.columns:
-            df_deduped[f"_{stage}_val"] = pd.to_numeric(df_deduped[col], errors='coerce').fillna(0)
-        else:
-            df_deduped[f"_{stage}_val"] = 0
-    
-    # Calculate combined TAT metrics
-    df_deduped["_loading_tat"] = df_deduped["_stage1_val"] + df_deduped["_stage2_val"] + df_deduped["_stage3_val"]
-    df_deduped["_unloading_tat"] = df_deduped["_stage4_val"] + df_deduped["_stage5_val"]
-    df_deduped["_total_tat"] = df_deduped["_loading_tat"] + df_deduped["_unloading_tat"]
-    
-    # Build grouping columns - Always include both Client and Plant for proper breakdown
-    group_cols = []
-    if tat_columns['client_col'] and tat_columns['client_col'] in df_deduped.columns:
-        group_cols.append(tat_columns['client_col'])
-    if tat_columns['plant_col'] and tat_columns['plant_col'] in df_deduped.columns:
-        group_cols.append(tat_columns['plant_col'])
-    
-    if not group_cols:
-        return pd.DataFrame()
-    
-    # Aggregate by client and plant
-    summary = df_deduped.groupby(group_cols, as_index=False).agg(
-        No_of_Trips=(group_cols[0], "count"),
-        Stage1_Avg=("_stage1_val", "mean"),
-        Stage2_Avg=("_stage2_val", "mean"),
-        Stage3_Avg=("_stage3_val", "mean"),
-        Stage4_Avg=("_stage4_val", "mean"),
-        Stage5_Avg=("_stage5_val", "mean"),
-        Loading_TAT=("_loading_tat", "mean"),
-        Unloading_TAT=("_unloading_tat", "mean"),
-        Total_TAT=("_total_tat", "mean"),
-    )
-    
-    # Add HH:MM formatted columns
-    summary["Stage1_HHMM"] = summary["Stage1_Avg"].apply(minutes_to_hhmm)
-    summary["Stage2_HHMM"] = summary["Stage2_Avg"].apply(minutes_to_hhmm)
-    summary["Stage3_HHMM"] = summary["Stage3_Avg"].apply(minutes_to_hhmm)
-    summary["Stage4_HHMM"] = summary["Stage4_Avg"].apply(minutes_to_hhmm)
-    summary["Stage5_HHMM"] = summary["Stage5_Avg"].apply(minutes_to_hhmm)
-    summary["Loading_TAT_HHMM"] = summary["Loading_TAT"].apply(minutes_to_hhmm)
-    summary["Unloading_TAT_HHMM"] = summary["Unloading_TAT"].apply(minutes_to_hhmm)
-    summary["Total_TAT_HHMM"] = summary["Total_TAT"].apply(minutes_to_hhmm)
-    
-    summary = summary.sort_values("Total_TAT")
-    
-    return summary
-
-def get_plant_drilldown_data(df_tat, tat_columns, plant_value, client_value=None):
-    """Get detailed trip-level data for a specific plant. Duplicates are dropped."""
-    df = df_tat.copy()
-    
-    # Filter by plant - only if specific plant selected
-    if plant_value and plant_value != "All Plants" and tat_columns['plant_col'] and tat_columns['plant_col'] in df.columns:
-        df[tat_columns['plant_col']] = df[tat_columns['plant_col']].astype(str).str.strip()
-        df = df[df[tat_columns['plant_col']] == str(plant_value).strip()]
-    
-    # Filter by client with exact match
-    if client_value and client_value != "All Clients" and tat_columns['client_col'] and tat_columns['client_col'] in df.columns:
-        df[tat_columns['client_col']] = df[tat_columns['client_col']].astype(str).str.upper().str.strip()
-        df = df[df[tat_columns['client_col']] == str(client_value).upper().strip()]
-    
     if df.empty:
         return pd.DataFrame()
     
-    # Drop duplicates - keep first occurrence
-    df, _ = drop_tat_duplicates(df, tat_columns['trip_no_col'])
+    df_work = df.copy()
     
-    # Calculate stage values
-    for stage in ["stage1", "stage2", "stage3", "stage4", "stage5"]:
-        col = tat_columns[stage]
-        if col and col in df.columns:
-            df[f"_{stage}_val"] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        else:
-            df[f"_{stage}_val"] = 0
+    # Group by client and plant (Source column from TAT)
+    group_cols = ['client', 'plant']
     
-    # Calculate TAT metrics
-    df["Loading_TAT"] = df["_stage1_val"] + df["_stage2_val"] + df["_stage3_val"]
-    df["Unloading_TAT"] = df["_stage4_val"] + df["_stage5_val"]
-    df["Total_TAT"] = df["Loading_TAT"] + df["Unloading_TAT"]
-    
-    # Build result dataframe
-    result_cols = {}
-    if tat_columns['trip_no_col']:
-        result_cols['Trip No'] = df[tat_columns['trip_no_col']]
-    if tat_columns['client_col']:
-        result_cols['Client'] = df[tat_columns['client_col']]
-    if tat_columns['destination_col']:
-        result_cols['Destination'] = df[tat_columns['destination_col']]
-    if tat_columns['plant_col']:
-        result_cols['Plant'] = df[tat_columns['plant_col']]
-    
-    # Add Inv Qty if it exists
-    if "Inv Qty" in df.columns:
-        result_cols['Inv Qty'] = df['Inv Qty']
-    
-    result_cols.update({
-        'DO Receipt (min)': df['_stage1_val'],
-        'Gate In - Loading (min)': df['_stage2_val'],
-        'Loading Exit (min)': df['_stage3_val'],
-        'Gate In - Unloading (min)': df['_stage4_val'],
-        'Unloading Exit (min)': df['_stage5_val'],
-        'Loading TAT (min)': df['Loading_TAT'],
-        'Unloading TAT (min)': df['Unloading_TAT'],
-        'Total TAT (min)': df['Total_TAT'],
-        'DO Receipt (HH:MM)': df['_stage1_val'].apply(minutes_to_hhmm),
-        'Gate In - Loading (HH:MM)': df['_stage2_val'].apply(minutes_to_hhmm),
-        'Loading Exit (HH:MM)': df['_stage3_val'].apply(minutes_to_hhmm),
-        'Gate In - Unloading (HH:MM)': df['_stage4_val'].apply(minutes_to_hhmm),
-        'Unloading Exit (HH:MM)': df['_stage5_val'].apply(minutes_to_hhmm),
-        'Loading TAT (HH:MM)': df['Loading_TAT'].apply(minutes_to_hhmm),
-        'Unloading TAT (HH:MM)': df['Unloading_TAT'].apply(minutes_to_hhmm),
-        'Total TAT (HH:MM)': df['Total_TAT'].apply(minutes_to_hhmm),
-    })
-    
-    return pd.DataFrame(result_cols)
-
-# ── UI Components ─────────────────────────────────────────────────────────────
-
-@st.dialog("📋 Trip Details", width="large")
-def show_trip_details(destination, trips_df):
-    """Drill-down modal showing detailed trip information."""
-    st.markdown(f"### 🚛 Trips to **{destination}**")
-    total_qty = trips_df["Inv Qty"].sum() if "Inv Qty" in trips_df.columns else 0
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Trips", len(trips_df))
-    with col2:
-        if "Trip Type" in trips_df.columns:
-            st.metric("Loaded Trips", len(trips_df[trips_df["Trip Type"] == "Loaded"]))
-    with col3:
-        if "Plant" in trips_df.columns:
-            st.metric("Plants Used", trips_df["Plant"].nunique())
-    with col4:
-        st.metric("Total Quantity", f"{total_qty:,.2f}")
-    
-    st.divider()
-    st.subheader("📊 Detailed Trip List")
-    
-    display_cols = ["Trip No", "Start Date", "Trip Type", "Client", "Plant", "Inv Qty", "Source File"]
-    available_cols = [col for col in display_cols if col in trips_df.columns]
-    
-    st.dataframe(
-        trips_df[available_cols],
-        use_container_width=True,
-        height=400,
-        hide_index=True
+    summary = df_work.groupby(group_cols, as_index=False).agg(
+        total_trips=('client', 'count'),
+        # Loading TAT
+        loading_tat_mean=('loading_tat', lambda x: x.mean(skipna=True)),
+        loading_tat_median=('loading_tat', lambda x: x.median(skipna=True)),
+        loading_tat_p95=('loading_tat', lambda x: x.quantile(0.95) if len(x.dropna()) > 0 else np.nan),
+        # Unloading TAT
+        unloading_tat_mean=('unloading_tat', lambda x: x.mean(skipna=True)),
+        unloading_tat_median=('unloading_tat', lambda x: x.median(skipna=True)),
+        # Total TAT
+        total_tat_mean=('total_tat', lambda x: x.mean(skipna=True)),
+        total_tat_median=('total_tat', lambda x: x.median(skipna=True)),
+        # Individual stages
+        stage1_mean=('stage_do_receipt', lambda x: x.mean(skipna=True)),
+        stage2_mean=('stage_gate_in_load', lambda x: x.mean(skipna=True)),
+        stage3_mean=('stage_loaded_exit', lambda x: x.mean(skipna=True)),
+        stage4_mean=('stage_gate_in_unload', lambda x: x.mean(skipna=True)),
+        stage5_mean=('stage_unloaded', lambda x: x.mean(skipna=True)),
     )
     
-    csv = trips_df[available_cols].to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="📥 Download CSV",
-        data=csv,
-        file_name=f"trips_to_{destination}.csv",
-        mime="text/csv"
-    )
+    # Add formatted columns
+    summary['loading_tat_hhmm'] = summary['loading_tat_mean'].apply(minutes_to_hhmm)
+    summary['unloading_tat_hhmm'] = summary['unloading_tat_mean'].apply(minutes_to_hhmm)
+    summary['total_tat_hhmm'] = summary['total_tat_mean'].apply(minutes_to_hhmm)
+    
+    summary['stage1_hhmm'] = summary['stage1_mean'].apply(minutes_to_hhmm)
+    summary['stage2_hhmm'] = summary['stage2_mean'].apply(minutes_to_hhmm)
+    summary['stage3_hhmm'] = summary['stage3_mean'].apply(minutes_to_hhmm)
+    summary['stage4_hhmm'] = summary['stage4_mean'].apply(minutes_to_hhmm)
+    summary['stage5_hhmm'] = summary['stage5_mean'].apply(minutes_to_hhmm)
+    
+    return summary.sort_values('total_tat_mean')
 
-def render_tat_report(df_tat, filters=None):
-    """Render the complete TAT Analysis Report tab."""
-    st.subheader("📊 Turnaround Time (TAT) Analysis Report")
-    st.markdown("*Comprehensive analysis of loading and unloading cycle times across plants and clients*")
-    st.markdown("*Note: Duplicate Trip Nos are **dropped** (first occurrence kept).*")
+def get_plant_drilldown(df: pd.DataFrame, plant: str, client: str = None) -> pd.DataFrame:
+    """Get detailed trip-level data for a specific plant (Source from TAT)."""
+    if df.empty:
+        return pd.DataFrame()
     
-    filter_options, tat_columns = get_tat_filter_options(df_tat)
+    plant_norm = normalize_text(pd.Series([plant]))[0]
+    df_filtered = df[df['plant'] == plant_norm]
     
-    # Standardize data formatting
-    if tat_columns['trip_no_col'] and tat_columns['trip_no_col'] in df_tat.columns:
-        df_tat[tat_columns['trip_no_col']] = (
-            df_tat[tat_columns['trip_no_col']]
-            .astype(str)
-            .str.strip()
-            .str.replace(r'\.0$', '', regex=True)
-        )
+    if client and client != 'All Clients':
+        client_norm = normalize_text(pd.Series([client]))[0]
+        df_filtered = df_filtered[df_filtered['client'] == client_norm]
     
-    if tat_columns['plant_col'] and tat_columns['plant_col'] in df_tat.columns:
-        df_tat[tat_columns['plant_col']] = df_tat[tat_columns['plant_col']].astype(str).str.upper().str.strip()
+    if df_filtered.empty:
+        return pd.DataFrame()
     
-    if tat_columns['client_col'] and tat_columns['client_col'] in df_tat.columns:
-        df_tat[tat_columns['client_col']] = df_tat[tat_columns['client_col']].astype(str).str.upper().str.strip()
+    # Prepare display columns - FIXED: define display_cols before using it
+    display_cols = ['trip_no', 'client', 'plant', 'destination', 'date_parsed']
+    display_cols += ['stage_do_receipt', 'stage_gate_in_load', 'stage_loaded_exit', 
+                    'stage_gate_in_unload', 'stage_unloaded']
+    display_cols += ['loading_tat', 'unloading_tat', 'total_tat']
     
-    # Predefined client list
-    ALLOWED_CLIENTS = [
-        "ARCELORMITTAL NIPPON STEEL INDIA LIMITED",
-        "DALMIA CEMENT (BHARAT)LIMITED",
-        "HINDUSTAN ZINC LIMITED",
-        "JINDAL STEEL AND POWER LIMITED",
-        "JSW STEEL LIMITED",
-        "TATA STEEL LIMITED CHENNAI",
-        "TATA STEEL LIMITED"
-    ]
+    result = df_filtered[display_cols].copy()
     
-    # Build client filter options
-    all_clients_in_data = (
-        sorted(df_tat[tat_columns['client_col']].dropna().unique().tolist())
-        if tat_columns['client_col']
-        else []
-    )
+    # Add formatted columns
+    for col in ['stage_do_receipt', 'stage_gate_in_load', 'stage_loaded_exit',
+                'stage_gate_in_unload', 'stage_unloaded', 'loading_tat', 'unloading_tat', 'total_tat']:
+        if col in result.columns:
+            result[f'{col}_hhmm'] = result[col].apply(minutes_to_hhmm)
     
-    available_clients = ["All Clients"]
-    client_mapping = {}
+    # Rename plant to clarify it's from TAT Source
+    result = result.rename(columns={'plant': 'Plant/Source (from TAT)'})
     
-    if all_clients_in_data:
-        for allowed_client in ALLOWED_CLIENTS:
-            if allowed_client in all_clients_in_data:
-                available_clients.append(allowed_client)
-                client_mapping[allowed_client] = allowed_client
-            else:
-                for actual_client in all_clients_in_data:
-                    if allowed_client in actual_client and actual_client != allowed_client:
-                        available_clients.append(allowed_client)
-                        client_mapping[allowed_client] = actual_client
-                        break
+    return result
+
+# ===================================================================================
+# UI COMPONENTS
+# ===================================================================================
+
+def render_metric_card(value: str, label: str, unit: str = ""):
+    """Render a styled metric card."""
+    st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-number">{value}</div>
+            <div class="metric-label">{label}</div>
+            {f'<div class="metric-unit">{unit}</div>' if unit else ''}
+        </div>
+    """, unsafe_allow_html=True)
+
+def render_tat_report(tat_df: pd.DataFrame, association: ClientPlantAssociation, trip_filters: Dict = None):
+    """Render the TAT analysis report with client-plant associations."""
+    st.subheader("📊 Turnaround Time (TAT) Analysis")
+    st.caption("Plant/Source column represents the **Source/Origin** from your TAT data")
     
-    # ── TAT Filters UI ──────────────────────────────────────────────────────
-    with st.expander("🔍 TAT Data Filters", expanded=True):
+    if tat_df.empty:
+        st.warning("No TAT data available for analysis.")
+        return
+    
+    # Display client-plant associations
+    association.render_association_summary()
+    st.markdown("---")
+    
+    # Get filter options - use predefined clients that exist in data
+    all_clients_in_data = tat_df['client'].dropna().unique().tolist()
+    
+    # Filter predefined clients to only those present in data
+    available_clients = [c for c in PREDEFINED_CLIENTS if normalize_text(pd.Series([c]))[0] in all_clients_in_data]
+    
+    # Add any other clients from data not in predefined list
+    for client in all_clients_in_data:
+        client_normalized = client
+        found = False
+        for predefined in PREDEFINED_CLIENTS:
+            if normalize_text(pd.Series([predefined]))[0] == client_normalized:
+                found = True
+                break
+        if not found and client not in ['UNKNOWN', 'EMPTY_TRIP']:
+            available_clients.append(client)
+    
+    available_clients = sorted(available_clients)
+    
+    # Filter UI
+    with st.expander("🔍 Filter TAT Data", expanded=True):
         st.markdown('<div class="filter-section">', unsafe_allow_html=True)
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if len(available_clients) > 1:
-                selected_tat_client = st.selectbox(
-                    "🏢 Client",
-                    available_clients,
-                    key="tat_client_filter"
-                )
-            else:
-                selected_tat_client = "All Clients"
-                st.warning("⚠️ None of the specified clients found in TAT data")
-        
-        actual_client_name = (
-            client_mapping.get(selected_tat_client, selected_tat_client)
-            if selected_tat_client != "All Clients"
-            else "All Clients"
-        )
+            selected_client = st.selectbox("🏢 Client", ["All Clients"] + available_clients, key="tat_client")
         
         with col2:
-            if tat_columns['plant_col']:
-                temp_df = df_tat.copy()
-                if actual_client_name != "All Clients" and tat_columns['client_col']:
-                    temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
-                    exact_client_name = str(actual_client_name).upper().strip()
-                    temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
-                
-                filtered_plants = sorted(temp_df[tat_columns['plant_col']].dropna().unique().tolist())
-                plant_options = ["All Plants"] + filtered_plants if filtered_plants else ["All Plants"]
-                
-                selected_tat_plant = st.selectbox(
-                    "🏭 Plant/Source",
-                    plant_options,
-                    key="tat_plant_filter"
-                )
+            # Get plants based on selected client
+            if selected_client != "All Clients":
+                # Get plants associated with selected client
+                associated_plants = association.get_plants_for_client(selected_client)
+                if associated_plants:
+                    plant_options = ["All Plants/Sources"] + associated_plants
+                else:
+                    # Fallback to all plants from data for this client
+                    client_plants = tat_df[tat_df['client'] == normalize_text(pd.Series([selected_client]))[0]]['plant'].dropna().unique().tolist()
+                    plant_options = ["All Plants/Sources"] + sorted(client_plants)
             else:
-                selected_tat_plant = "All Plants"
+                all_plants = sorted(tat_df['plant'].dropna().unique().tolist())
+                plant_options = ["All Plants/Sources"] + all_plants
+            
+            selected_plant = st.selectbox("🏭 Plant/Source (from TAT)", plant_options, key="tat_plant")
         
         with col3:
-            if tat_columns['destination_col']:
-                temp_df = df_tat.copy()
-                if actual_client_name != "All Clients" and tat_columns['client_col']:
-                    temp_df[tat_columns['client_col']] = temp_df[tat_columns['client_col']].astype(str).str.upper().str.strip()
-                    exact_client_name = str(actual_client_name).upper().strip()
-                    temp_df = temp_df[temp_df[tat_columns['client_col']] == exact_client_name]
-                
-                if selected_tat_plant != "All Plants" and tat_columns['plant_col']:
-                    temp_df[tat_columns['plant_col']] = temp_df[tat_columns['plant_col']].astype(str).str.strip()
-                    temp_df = temp_df[temp_df[tat_columns['plant_col']] == str(selected_tat_plant).strip()]
-                
-                filtered_destinations = sorted(temp_df[tat_columns['destination_col']].dropna().unique().tolist())
-                destination_options = ["All Destinations"] + filtered_destinations if filtered_destinations else ["All Destinations"]
-                
-                selected_tat_destination = st.selectbox(
-                    "📍 Destination",
-                    destination_options,
-                    key="tat_destination_filter"
-                )
-            else:
-                selected_tat_destination = "All Destinations"
+            # Filter destinations based on selections
+            temp_df = tat_df
+            if selected_client != "All Clients":
+                client_norm = normalize_text(pd.Series([selected_client]))[0]
+                temp_df = temp_df[temp_df['client'] == client_norm]
+            if selected_plant != "All Plants/Sources":
+                plant_norm = normalize_text(pd.Series([selected_plant]))[0]
+                temp_df = temp_df[temp_df['plant'] == plant_norm]
+            filtered_dests = temp_df['destination'].dropna().unique().tolist()
+            dest_options = ["All Destinations"] + sorted(filtered_dests)
+            selected_dest = st.selectbox("📍 Destination", dest_options, key="tat_dest")
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
-            if filter_options['min_date'] and filter_options['max_date']:
+            min_date = tat_df['date_parsed'].min().date() if tat_df['date_parsed'].notna().any() else None
+            max_date = tat_df['date_parsed'].max().date() if tat_df['date_parsed'].notna().any() else None
+            
+            if min_date and max_date:
                 date_range = st.date_input(
                     "📅 Date Range",
-                    value=(filter_options['min_date'], filter_options['max_date']),
-                    min_value=filter_options['min_date'],
-                    max_value=filter_options['max_date'],
-                    key="tat_date_filter"
-                )
-                start_date, end_date = (
-                    (date_range[0], date_range[1])
-                    if len(date_range) == 2
-                    else (None, None)
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="tat_date"
                 )
             else:
-                start_date, end_date = None, None
+                date_range = (None, None)
         
         with col2:
-            use_trip_filter = st.checkbox(
-                "🔗 Filter by Trip Analysis selection",
-                value=(filters is not None and filters.get('trip_nos') is not None),
-                key="tat_trip_filter_checkbox"
-            )
-        
-        with col3:
-            if st.button("🗑️ Clear TAT Filters", use_container_width=True, key="clear_tat_filters"):
-                for key in ["tat_client_filter", "tat_plant_filter", "tat_destination_filter", "tat_trip_filter_checkbox"]:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                st.rerun()
+            link_trips = st.checkbox("🔗 Link with Trip Analysis", value=trip_filters is not None)
+            if link_trips and trip_filters:
+                st.caption(f"✅ Linked to {len(trip_filters.get('trip_nos', [])):,} trips from Trip Report")
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    st.markdown("---")
-    
-    # Build TAT filters dictionary
-    tat_filters = {
-        'client': actual_client_name,
-        'plant': selected_tat_plant,
-        'destination': selected_tat_destination if selected_tat_destination != "All Destinations" else "All Destinations",
-        'date_range': (start_date, end_date) if 'start_date' in locals() else (None, None),
-        'trip_nos': filters.get('trip_nos') if use_trip_filter and filters else None,
+    # Build filters
+    filters = {
+        'client_names': [selected_client] if selected_client != "All Clients" else [],
+        'plant': selected_plant,
+        'destination': selected_dest,
+        'date_range': date_range if len(date_range) == 2 else (None, None),
+        'trip_nos': trip_filters.get('trip_nos') if link_trips and trip_filters else None
     }
     
-    # Process TAT data
-    avg_stage1, avg_stage2, avg_stage3, avg_stage4, avg_stage5, total_records, filtered_tat_df, rows_dropped = process_tat_data(df_tat, tat_filters)
+    # Apply filters
+    filtered_df = apply_tat_filters(tat_df, filters, association)
     
-    # Calculate totals
-    total_loading = avg_stage1 + avg_stage2 + avg_stage3
-    total_unloading = avg_stage4 + avg_stage5
-    total_tat = total_loading + total_unloading
+    if filtered_df.empty:
+        st.info("No data matches the selected filters. Try adjusting your criteria.")
+        return
     
-    # Show active filters and dedup info
-    active_filters = []
-    if tat_filters['client'] != "All Clients":
-        active_filters.append(f"Client: **{selected_tat_client}**")
-    if tat_filters['plant'] != "All Plants":
-        active_filters.append(f"Plant: **{tat_filters['plant']}**")
-    if tat_filters['destination'] != "All Destinations":
-        active_filters.append(f"Destination: **{tat_filters['destination']}**")
-    if tat_filters['date_range'][0] and tat_filters['date_range'][1]:
-        active_filters.append(f"Date: **{tat_filters['date_range'][0]}** to **{tat_filters['date_range'][1]}**")
-    if use_trip_filter and tat_filters['trip_nos']:
-        active_filters.append(f"Trip Filter: **{len(tat_filters['trip_nos']):,}** trips")
+    # Calculate metrics
+    total_trips = len(filtered_df)
+    loading_mean = filtered_df['loading_tat'].mean(skipna=True)
+    unloading_mean = filtered_df['unloading_tat'].mean(skipna=True)
+    total_mean = filtered_df['total_tat'].mean(skipna=True)
     
-    if active_filters:
-        st.info(f"🔍 **Active Filters:** {' | '.join(active_filters)} | **Unique Trips:** {total_records:,}")
-    else:
-        st.info(f"📊 **All Records:** Showing all {total_records:,} unique TAT trips")
-    
-    if rows_dropped > 0:
-        st.warning(f"🗑️ **{rows_dropped:,} duplicate Trip No(s) dropped** (first occurrence kept)")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Summary metrics
+    # Display metrics
+    st.markdown("### Key Metrics")
     col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(
-            f'<div class="metric-card">'
-            f'<div class="metric-number">{minutes_to_hhmm(total_loading)}</div>'
-            f'<div class="metric-label">⏱️ Avg Loading Time</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    with col2:
-        st.markdown(
-            f'<div class="metric-card">'
-            f'<div class="metric-number">{minutes_to_hhmm(total_unloading)}</div>'
-            f'<div class="metric-label">⏱️ Avg Unloading Time</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    with col3:
-        st.markdown(
-            f'<div class="metric-card">'
-            f'<div class="metric-number">{total_records:,}</div>'
-            f'<div class="metric-label">📋 Unique Trips Analyzed</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
     
-    st.markdown("<br>", unsafe_allow_html=True)
+    with col1:
+        render_metric_card(minutes_to_hhmm(loading_mean), "Avg Loading TAT", "S1+S2+S3")
+    with col2:
+        render_metric_card(minutes_to_hhmm(unloading_mean), "Avg Unloading TAT", "S4+S5")
+    with col3:
+        render_metric_card(f"{total_trips:,}", "Total Trips Analyzed", "")
+    
+    st.markdown("---")
     
     # Detailed TAT Breakdown
     st.markdown("### 📈 Detailed TAT Breakdown")
-    st.markdown("*Each value represents the average time across all unique trips (duplicates dropped)*")
     
-    st.markdown('<div class="tat-container">', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
     
-    # Loading Process
-    st.markdown(
-        '<div class="tat-column">'
-        '<div class="tat-column-header loading-header">⏱️ LOADING PROCESS (S1+S2+S3)</div>'
-        '<div class="tat-column-body">',
-        unsafe_allow_html=True
-    )
+    with col1:
+        st.markdown("#### ⏱️ LOADING PROCESS")
+        stages = [
+            ("DO Receipt", "DO to Gate Entry", filtered_df['stage_do_receipt'].mean(skipna=True)),
+            ("Gate In", "Gate to Loading Bay", filtered_df['stage_gate_in_load'].mean(skipna=True)),
+            ("Loading Exit", "Loading to Exit", filtered_df['stage_loaded_exit'].mean(skipna=True))
+        ]
+        
+        for name, desc, val in stages:
+            st.markdown(f"""
+                <div class="tat-stage-row">
+                    <div class="stage-info">
+                        <div class="stage-name">{name}</div>
+                        <div class="stage-desc">{desc}</div>
+                    </div>
+                    <div class="stage-time">
+                        <div class="stage-minutes">{val:.1f} min</div>
+                        <div class="stage-hhmm">{minutes_to_hhmm(val)}</div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+            <div class="tat-total-row">
+                <div class="tat-total-label">✅ Total Loading TAT</div>
+                <div class="stage-time">
+                    <div class="stage-minutes">{loading_mean:.1f} min</div>
+                    <div class="stage-hhmm">{minutes_to_hhmm(loading_mean)}</div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
     
-    loading_stages = [
-        ("DO Receipt", "DO Receipt to Gate Entry", avg_stage1),
-        ("Gate In", "Gate Entry to Loading Bay", avg_stage2),
-        ("Loading Exit", "Loading Process & Exit", avg_stage3)
-    ]
+    with col2:
+        st.markdown("#### ⏱️ UNLOADING PROCESS")
+        stages = [
+            ("Gate In", "Gate for Unloading", filtered_df['stage_gate_in_unload'].mean(skipna=True)),
+            ("Unloading Exit", "Unloading to Exit", filtered_df['stage_unloaded'].mean(skipna=True))
+        ]
+        
+        for name, desc, val in stages:
+            st.markdown(f"""
+                <div class="tat-stage-row">
+                    <div class="stage-info">
+                        <div class="stage-name">{name}</div>
+                        <div class="stage-desc">{desc}</div>
+                    </div>
+                    <div class="stage-time">
+                        <div class="stage-minutes">{val:.1f} min</div>
+                        <div class="stage-hhmm">{minutes_to_hhmm(val)}</div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+            <div class="tat-total-row">
+                <div class="tat-total-label">✅ Total Unloading TAT</div>
+                <div class="stage-time">
+                    <div class="stage-minutes">{unloading_mean:.1f} min</div>
+                    <div class="stage-hhmm">{minutes_to_hhmm(unloading_mean)}</div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
     
-    for stage_name, stage_desc, avg_val in loading_stages:
-        st.markdown(
-            f'<div class="tat-stage-row">'
-            f'<div class="stage-info">'
-            f'<div class="stage-name">{stage_name}</div>'
-            f'<div class="stage-desc">{stage_desc}</div>'
-            f'</div>'
-            f'<div class="stage-time">'
-            f'<div class="stage-minutes">{avg_val:.2f} min</div>'
-            f'<div class="stage-hhmm">{minutes_to_hhmm(avg_val)}</div>'
-            f'</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    
-    st.markdown(
-        f'<div class="tat-total-row">'
-        f'<div class="tat-total-label">✅ Total Loading TAT</div>'
-        f'<div class="tat-total-time">'
-        f'<div class="tat-total-minutes">{total_loading:.2f} min</div>'
-        f'<div class="tat-total-hhmm">{minutes_to_hhmm(total_loading)}</div>'
-        f'</div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-    st.markdown('</div></div>', unsafe_allow_html=True)
-    
-    # Unloading Process
-    st.markdown(
-        '<div class="tat-column">'
-        '<div class="tat-column-header unloading-header">⏱️ UNLOADING PROCESS (S4+S5)</div>'
-        '<div class="tat-column-body">',
-        unsafe_allow_html=True
-    )
-    
-    unloading_stages = [
-        ("Gate In", "Gate In for Unloading", avg_stage4),
-        ("Unloading Exit", "Unloading Process", avg_stage5)
-    ]
-    
-    for stage_name, stage_desc, avg_val in unloading_stages:
-        st.markdown(
-            f'<div class="tat-stage-row">'
-            f'<div class="stage-info">'
-            f'<div class="stage-name">{stage_name}</div>'
-            f'<div class="stage-desc">{stage_desc}</div>'
-            f'</div>'
-            f'<div class="stage-time">'
-            f'<div class="stage-minutes">{avg_val:.2f} min</div>'
-            f'<div class="stage-hhmm">{minutes_to_hhmm(avg_val)}</div>'
-            f'</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    
-    st.markdown(
-        f'<div class="tat-total-row">'
-        f'<div class="tat-total-label">✅ Total Unloading TAT</div>'
-        f'<div class="tat-total-time">'
-        f'<div class="tat-total-minutes">{total_unloading:.2f} min</div>'
-        f'<div class="tat-total-hhmm">{minutes_to_hhmm(total_unloading)}</div>'
-        f'</div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-    st.markdown('</div></div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Grand Total TAT
-    loading_hhmm = minutes_to_hhmm(total_loading)
-    unloading_hhmm = minutes_to_hhmm(total_unloading)
-    total_hhmm = minutes_to_hhmm(total_tat)
-    
-    st.markdown(f'''
-    <div class="grand-total-container">
-        <div class="grand-total-content">
-            <div class="grand-total-label">🔴 TOTAL TAT (Loading + Unloading)</div>
-            <div class="grand-total-time">
-                <div class="grand-total-minutes">{total_tat:.2f} min</div>
-                <div class="grand-total-hhmm">{total_hhmm}</div>
+    # Grand Total
+    st.markdown(f"""
+        <div class="grand-total-container">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div class="grand-total-label">🔴 TOTAL TAT (Loading + Unloading)</div>
+                <div class="grand-total-time">
+                    <div class="grand-total-minutes">{total_mean:.1f} min</div>
+                    <div class="grand-total-hhmm">{minutes_to_hhmm(total_mean)}</div>
+                </div>
+            </div>
+            <div style="font-size: 0.75rem; color: #666; margin-top: 12px; text-align: center;">
+                Loading TAT ({minutes_to_hhmm(loading_mean)}) + Unloading TAT ({minutes_to_hhmm(unloading_mean)}) = {minutes_to_hhmm(total_mean)}
             </div>
         </div>
-        <div class="grand-total-formula">
-            Total Loading TAT ({loading_hhmm}) + Total Unloading TAT ({unloading_hhmm}) = <strong>{total_hhmm}</strong>
-        </div>
-    </div>
-    ''', unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
     
-    # Client/Plant Summary Table
-    if total_tat > 0 and not filtered_tat_df.empty:
+    st.markdown("---")
+    
+    # Client/Plant Summary Table (Using TAT Source column as Plant)
+    st.markdown("### 📊 Client / Plant/Source (from TAT) TAT Summary")
+    st.caption("The **Plant/Source** column represents the actual **Source/Origin** from your TAT data file")
+    
+    summary_df = calculate_tat_summary(filtered_df, association)
+    
+    if not summary_df.empty:
+        # Display as dataframe with styling
+        display_df = summary_df[[
+            'client', 'plant', 'total_trips',
+            'loading_tat_mean', 'loading_tat_hhmm',
+            'unloading_tat_mean', 'unloading_tat_hhmm',
+            'total_tat_mean', 'total_tat_hhmm'
+        ]].copy()
+        
+        display_df.columns = [
+            'Client', 'Plant/Source (from TAT)', 'Trips',
+            'Loading TAT (min)', 'Loading TAT', 
+            'Unloading TAT (min)', 'Unloading TAT',
+            'Total TAT (min)', 'Total TAT'
+        ]
+        
+        # Format the dataframe
+        display_df['Loading TAT'] = display_df['Loading TAT'].apply(lambda x: f"{x}")
+        display_df['Unloading TAT'] = display_df['Unloading TAT'].apply(lambda x: f"{x}")
+        display_df['Total TAT'] = display_df['Total TAT'].apply(lambda x: f"{x}")
+        display_df['Loading TAT (min)'] = display_df['Loading TAT (min)'].round(1)
+        display_df['Unloading TAT (min)'] = display_df['Unloading TAT (min)'].round(1)
+        display_df['Total TAT (min)'] = display_df['Total TAT (min)'].round(1)
+        
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+        # Export
+        csv = display_df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Summary CSV", csv, "tat_summary.csv", "text/csv")
+        
+        # Plant Drill-down
         st.markdown("---")
-        st.markdown("### 📊 Client / Plant TAT Summary")
-        st.markdown(
-            "**LOADING TAT (S1+S2+S3) | UNLOADING TAT (S4+S5) | TOTAL TAT (Loading + Unloading)**\n\n"
-            "*Values are based on unique trips (duplicates dropped, first occurrence kept)*"
-        )
+        st.markdown("### 🔍 Plant/Source Details")
+        st.caption("Drill down into individual trip details for any Plant/Source from your TAT data")
         
-        summary_df = calculate_client_plant_tat_summary(filtered_tat_df, tat_columns)
+        plant_options = summary_df['plant'].unique().tolist()
+        selected_plant_drill = st.selectbox("Select Plant/Source for Trip Details", plant_options)
         
-        if not summary_df.empty:
-            has_client = tat_columns['client_col'] and tat_columns['client_col'] in summary_df.columns
-            has_plant = tat_columns['plant_col'] and tat_columns['plant_col'] in summary_df.columns
+        if selected_plant_drill:
+            drill_df = get_plant_drilldown(filtered_df, selected_plant_drill, selected_client if selected_client != "All Clients" else None)
             
-            # Build HTML table
-            table_html = '<table class="summary-table"><thead>'
-            table_html += '<tr class="header-row">'
-            
-            if has_client:
-                table_html += '<th rowspan="2" style="min-width:200px;">Client</th>'
-            if has_plant:
-                table_html += '<th rowspan="2" style="min-width:150px;">Plant</th>'
-            
-            table_html += '<th rowspan="2">No. of<br>Trips</th>'
-            table_html += '<th colspan="5" style="background:#1a73e8;">LOADING TAT (S1+S2+S3)</th>'
-            table_html += '<th colspan="4" style="background:#34a853;">UNLOADING TAT (S4+S5)</th>'
-            table_html += '<th colspan="2" style="background:#d32f2f;">TOTAL TAT<br>(Loading+Unloading)</th>'
-            table_html += '</tr>'
-            
-            table_html += '<tr>'
-            table_html += '<th>DO Receipt</th><th>Gate In</th><th>Loading Exit</th>'
-            table_html += '<th>Total Loading<br>(min)</th><th>Total Loading<br>(HH:MM)</th>'
-            table_html += '<th>Gate In</th><th>Unloading Exit</th>'
-            table_html += '<th>Total Unloading<br>(min)</th><th>Total Unloading<br>(HH:MM)</th>'
-            table_html += '<th>Total TAT<br>(min)</th><th>Total TAT<br>(HH:MM)</th>'
-            table_html += '</tr>'
-            table_html += '</thead><tbody>'
-            
-            for _, row in summary_df.iterrows():
-                table_html += '<tr>'
-                if has_client:
-                    table_html += f'<td class="client-col">{row[tat_columns["client_col"]]}</td>'
-                if has_plant:
-                    table_html += f'<td class="plant-col">{row[tat_columns["plant_col"]]}</td>'
+            if not drill_df.empty:
+                st.markdown(f"#### 📋 Trip Details for Plant/Source: **{selected_plant_drill}**")
+                st.dataframe(drill_df, use_container_width=True, hide_index=True)
                 
-                table_html += f'<td>{int(row["No_of_Trips"])}</td>'
-                table_html += f'<td class="loading-cell">{row["Stage1_Avg"]:.1f}<br><small>{row["Stage1_HHMM"]}</small></td>'
-                table_html += f'<td class="loading-cell">{row["Stage2_Avg"]:.1f}<br><small>{row["Stage2_HHMM"]}</small></td>'
-                table_html += f'<td class="loading-cell">{row["Stage3_Avg"]:.1f}<br><small>{row["Stage3_HHMM"]}</small></td>'
-                table_html += f'<td class="loading-cell"><strong>{row["Loading_TAT"]:.1f}</strong></td>'
-                table_html += f'<td class="loading-cell">{row["Loading_TAT_HHMM"]}</td>'
-                table_html += f'<td class="unloading-cell">{row["Stage4_Avg"]:.1f}<br><small>{row["Stage4_HHMM"]}</small></td>'
-                table_html += f'<td class="unloading-cell">{row["Stage5_Avg"]:.1f}<br><small>{row["Stage5_HHMM"]}</small></td>'
-                table_html += f'<td class="unloading-cell"><strong>{row["Unloading_TAT"]:.1f}</strong></td>'
-                table_html += f'<td class="unloading-cell">{row["Unloading_TAT_HHMM"]}</td>'
-                table_html += f'<td class="total-cell"><strong>{row["Total_TAT"]:.1f}</strong></td>'
-                table_html += f'<td class="total-cell">{row["Total_TAT_HHMM"]}</td>'
-                table_html += '</tr>'
-            
-            # Grand total row
-            total_trips_count = int(summary_df["No_of_Trips"].sum())
-            weighted_s1 = (summary_df["Stage1_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s2 = (summary_df["Stage2_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s3 = (summary_df["Stage3_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s4 = (summary_df["Stage4_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_s5 = (summary_df["Stage5_Avg"] * summary_df["No_of_Trips"]).sum() / total_trips_count if total_trips_count > 0 else 0
-            weighted_load = weighted_s1 + weighted_s2 + weighted_s3
-            weighted_unload = weighted_s4 + weighted_s5
-            weighted_total = weighted_load + weighted_unload
-            
-            label_colspan = 0
-            if has_client:
-                label_colspan += 1
-            if has_plant:
-                label_colspan += 1
-            
-            table_html += '<tr class="grand-total-row">'
-            table_html += f'<td colspan="{label_colspan}" class="grand-total-label">GRAND TOTAL - All Records</td>'
-            table_html += f'<td><strong>{total_trips_count}</strong></td>'
-            table_html += f'<td class="loading-cell">{weighted_s1:.1f}<br><small>{minutes_to_hhmm(weighted_s1)}</small></td>'
-            table_html += f'<td class="loading-cell">{weighted_s2:.1f}<br><small>{minutes_to_hhmm(weighted_s2)}</small></td>'
-            table_html += f'<td class="loading-cell">{weighted_s3:.1f}<br><small>{minutes_to_hhmm(weighted_s3)}</small></td>'
-            table_html += f'<td class="loading-cell"><strong>{weighted_load:.1f}</strong></td>'
-            table_html += f'<td class="loading-cell">{minutes_to_hhmm(weighted_load)}</td>'
-            table_html += f'<td class="unloading-cell">{weighted_s4:.1f}<br><small>{minutes_to_hhmm(weighted_s4)}</small></td>'
-            table_html += f'<td class="unloading-cell">{weighted_s5:.1f}<br><small>{minutes_to_hhmm(weighted_s5)}</small></td>'
-            table_html += f'<td class="unloading-cell"><strong>{weighted_unload:.1f}</strong></td>'
-            table_html += f'<td class="unloading-cell">{minutes_to_hhmm(weighted_unload)}</td>'
-            table_html += f'<td class="total-cell"><strong>{weighted_total:.1f}</strong></td>'
-            table_html += f'<td class="total-cell">{minutes_to_hhmm(weighted_total)}</td>'
-            table_html += '</tr>'
-            
-            table_html += '</tbody></table>'
-            st.markdown(table_html, unsafe_allow_html=True)
-            
-            # Download buttons
-            csv_summary = summary_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                "📥 Download Client/Plant TAT Summary (CSV)",
-                data=csv_summary,
-                file_name="client_plant_tat_summary.csv",
-                mime="text/csv"
-            )
-            
-            # Plant drill-down
-            if has_plant:
-                st.markdown("---")
-                st.markdown("### 🔍 Plant-wise Detailed TAT Analysis")
-                st.markdown("*Drill down into individual trip details for any plant*")
-                
-                plants_in_summary = sorted(summary_df[tat_columns['plant_col']].unique().tolist())
-                selected_drill_plant = st.selectbox(
-                    "🏭 Select Plant for Detailed View",
-                    options=plants_in_summary,
-                    key="plant_drilldown_select"
-                )
-                
-                if selected_drill_plant:
-                    drilldown_df = get_plant_drilldown_data(
-                        filtered_tat_df,
-                        tat_columns,
-                        selected_drill_plant,
-                        client_value=actual_client_name if actual_client_name != "All Clients" else None
-                    )
-                    
-                    if not drilldown_df.empty:
-                        st.markdown(f"#### 📋 Trip Details for Plant: **{selected_drill_plant}**")
-                        st.markdown(f"*Total unique trips: {len(drilldown_df)}*")
-                        st.dataframe(
-                            drilldown_df,
-                            use_container_width=True,
-                            height=400,
-                            hide_index=True
-                        )
-                        
-                        csv_drilldown = drilldown_df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            f"📥 Download {selected_drill_plant} Trip Details (CSV)",
-                            data=csv_drilldown,
-                            file_name=f"plant_drilldown_{selected_drill_plant}.csv",
-                            mime="text/csv"
-                        )
-                    else:
-                        st.info(f"No trip details available for plant: {selected_drill_plant}")
-        else:
-            st.info("Client/Plant columns not available in TAT data for summary table.")
+                csv_drill = drill_df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Trip Details CSV", csv_drill, f"plant_source_{selected_plant_drill}_trips.csv", "text/csv")
 
-# ── Main Application ─────────────────────────────────────────────────────────
+# ===================================================================================
+# TRIP ANALYSIS TAB
+# ===================================================================================
 
-# Header
-st.title("🚛 Trip & TAT Analytics Suite")
-st.markdown("""
-<div class="header-banner">
-    <h2 style="color: white; margin: 0; font-size: 1.5rem;">Logistics Performance Dashboard</h2>
-    <p style="color: #e3f2fd; margin: 10px 0 0 0; font-size: 1.1rem;">
-        Upload your monthly trip reports and TAT data to analyze delivery patterns, 
-        monitor turnaround times, and optimize fleet utilization.
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-st.divider()
-
-# File upload section
-st.markdown("### 📂 Data Upload")
-
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("#### 🚛 Trip Reports")
-    uploaded_files = st.file_uploader(
-        "Upload Trip Report(s) (.xlsx)",
-        type=["xlsx"],
-        accept_multiple_files=True,
-        help="Upload monthly trip reports containing trip details, quantities, and delivery information.",
-        key="trip_uploader"
-    )
-
-with col2:
-    st.markdown("#### 📊 TAT Data")
-    tat_file = st.file_uploader(
-        "Upload TAT Data File (.xlsx)",
-        type=["xlsx"],
-        accept_multiple_files=False,
-        help="Upload Turnaround Time dataset with loading/unloading stage timings.",
-        key="tat_uploader"
-    )
-
-st.divider()
-
-# Check for uploaded data
-has_trip_data = uploaded_files is not None and len(uploaded_files) > 0
-has_tat_data = tat_file is not None
-
-if has_trip_data or has_tat_data:
-    # Setup tabs based on available data
-    tab_labels = []
-    if has_trip_data:
-        tab_labels.append("🚛 Trip Analysis")
-    if has_tat_data:
-        tab_labels.append("📊 TAT Report")
+def render_trip_analysis(trip_df: pd.DataFrame):
+    """Render the trip analysis tab."""
+    st.subheader("🚛 Trip Analysis")
     
-    if len(tab_labels) == 2:
-        tab1, tab2 = st.tabs(tab_labels)
-    elif len(tab_labels) == 1:
-        if tab_labels[0] == "🚛 Trip Analysis":
-            tab1, tab2 = st.container(), None
-        else:
-            tab2, tab1 = st.container(), None
-else:
-    tab1, tab2 = st.container(), None
-
-# Initialize data containers
-df, audit_df, filtered = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
-# Load Trip Data
-if has_trip_data:
-    files_data = [(f.name, f.read()) for f in uploaded_files]
-    result = load_files(files_data)
-    df, audit_df = result["df"], result["audit_df"]
+    if trip_df.empty:
+        st.warning("No trip data available.")
+        return
     
-    for level, text in result["messages"]:
-        if level == "warning":
-            st.warning(text)
-        elif level == "error":
-            st.error(text)
-        else:
-            st.info(text)
+    # Get clients from data that match predefined list
+    all_clients_in_data = trip_df['client'].dropna().unique().tolist()
     
-    if df.empty and not has_tat_data:
-        st.error("No valid data could be loaded. Please check your files.")
-        st.stop()
-
-# Load TAT Data
-df_tat = pd.DataFrame()
-if has_tat_data:
-    df_tat, tat_error = load_tat_file(tat_file.read())
-    if tat_error:
-        st.error(f"Could not read TAT file: {tat_error}")
-        df_tat = pd.DataFrame()
-
-# ── TAB 1: Trip Analysis ────────────────────────────────────────────────────
-if has_trip_data and tab1 is not None:
-    with (tab1 if tab2 is not None else st.container()):
-        # Deduplication Report
-        if not audit_df.empty:
-            with st.expander(
-                f"🔁 Deduplication Report — {len(audit_df)} duplicate Trip No(s) resolved",
-                expanded=False
-            ):
-                st.markdown("""
-                **How duplicates were handled:**
-                - Same Trip No appearing multiple times → grouped into single record
-                - Invoice Quantity (Inv Qty) → **SUMMED** across grouped rows
-                - All other columns → kept first occurrence value
-                """)
-                st.dataframe(audit_df, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "📥 Download Deduplication Audit Log (CSV)",
-                    data=audit_df.to_csv(index=False).encode("utf-8"),
-                    file_name="deduplication_audit.csv",
-                    mime="text/csv"
-                )
-        
-        # Overall Summary
-        total_trips_all = len(df)
-        loaded_trips_all = len(df[df["Trip Type"] == "Loaded"])
-        empty_trips_all = len(df[df["Trip Type"] == "Empty"])
-        total_qty_all = df["Inv Qty"].sum()
-        
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("Total Trips (All)", f"{total_trips_all:,}")
-        with c2:
-            st.metric(
-                "Loaded Trips",
-                f"{loaded_trips_all:,}",
-                delta=f"{loaded_trips_all/total_trips_all*100:.1f}%" if total_trips_all else "0%"
-            )
-        with c3:
-            st.metric(
-                "Empty Trips",
-                f"{empty_trips_all:,}",
-                delta=f"{empty_trips_all/total_trips_all*100:.1f}%" if total_trips_all else "0%"
-            )
-        with c4:
-            st.metric("Total Quantity", f"{total_qty_all:,.2f}")
-        
-        st.success(f"✅ Successfully loaded **{len(df):,}** unique trip records from **{len(files_data)}** file(s).")
-        st.info("💡 **Tip:** Click on any destination in the table to see detailed trip information!")
-        
-        # Filters
-        st.subheader("🔍 Filter Your Data")
-        
-        clients = sorted(df["Client"].dropna().unique().tolist())
-        regular_clients = [c for c in clients if not c.startswith("EMPTY TRIP")]
-        empty_trip_opts = [c for c in clients if c.startswith("EMPTY TRIP")]
-        client_options = regular_clients + empty_trip_opts
+    # Filter predefined clients to only those present in data
+    available_clients = []
+    for predefined in PREDEFINED_CLIENTS:
+        predefined_norm = normalize_text(pd.Series([predefined]))[0]
+        if predefined_norm in all_clients_in_data:
+            available_clients.append(predefined)
+    
+    # Add any other clients not in predefined
+    for client in all_clients_in_data:
+        if client not in [normalize_text(pd.Series([c]))[0] for c in available_clients] and client not in ['UNKNOWN', 'EMPTY_TRIP']:
+            # Try to find original name
+            available_clients.append(client)
+    
+    available_clients = sorted(available_clients)
+    
+    # Filter UI
+    with st.expander("🔍 Filter Trip Data", expanded=True):
+        selected_client = st.selectbox("🏢 Client", available_clients, key="trip_client")
         
         col1, col2 = st.columns(2)
+        
         with col1:
-            selected_client = st.selectbox("🏢 Select Client", client_options, key="client_select_tab1")
+            client_norm = normalize_text(pd.Series([selected_client]))[0]
+            client_plants = sorted(trip_df[trip_df['client'] == client_norm]['plant'].dropna().unique().tolist())
+            selected_plants = st.multiselect("🏭 Plant (from Trip Report)", client_plants, default=client_plants)
+        
         with col2:
-            client_plants = sorted(df[df["Client"] == selected_client]["Plant"].dropna().unique().tolist())
-            plant_options = ["All Plants"] + client_plants
-            
-            selected_plant_input = st.multiselect(
-                "🏭 Select Plant/Source",
-                options=plant_options,
-                default=["All Plants"],
-                placeholder="Pick plants to filter...",
-                key="plant_select_tab1"
-            )
-            
-            if not selected_plant_input or "All Plants" in selected_plant_input:
-                selected_plants = client_plants
-            else:
-                selected_plants = selected_plant_input
-            
-            if not selected_plants:
-                st.warning("⚠️ No plants found for this client.")
-                if not has_tat_data:
-                    st.stop()
+            months = sorted(trip_df['month'].dropna().unique().tolist(), reverse=True)
+            selected_month = st.selectbox("📅 Month", ["All Months"] + months)
         
-        col3, col4, col5 = st.columns(3)
-        with col3:
-            months = sorted(df["Month"].dropna().unique().tolist(), reverse=True)
-            selected_month = st.selectbox("📅 Select Month", ["All Months"] + months, key="month_select_tab1")
-        with col4:
-            trip_type_opts = ["All Types"] + sorted(df["Trip Type"].dropna().unique().tolist())
-            selected_type = st.selectbox("🔄 Trip Type", trip_type_opts, key="type_select_tab1")
-        with col5:
-            if st.button("🗑️ Clear All Filters", use_container_width=True, key="clear_tab1"):
-                st.rerun()
-        
-        st.divider()
-        
-        # Apply filters
-        filtered = df[df["Client"] == selected_client].copy()
-        if selected_plants:
-            filtered = filtered[filtered["Plant"].isin(selected_plants)]
-        if selected_month != "All Months":
-            filtered = filtered[filtered["Month"] == selected_month]
-        if selected_type != "All Types":
-            filtered = filtered[filtered["Trip Type"] == selected_type]
-        
-        # Filtered metrics
-        total_trips = len(filtered)
-        loaded_trips = len(filtered[filtered["Trip Type"] == "Loaded"])
-        empty_trips = len(filtered[filtered["Trip Type"] == "Empty"])
-        unique_dest = filtered["Destination"].nunique()
-        unique_plants = filtered["Plant"].nunique()
-        total_qty = filtered["Inv Qty"].sum()
-        
-        st.caption(f"📌 **Selected Plants ({len(selected_plants)}):** {', '.join(selected_plants[:5])}{'...' if len(selected_plants) > 5 else ''}")
-        
-        def _card(col, val, label):
-            with col:
-                st.markdown(
-                    f'<div class="metric-card">'
-                    f'<div class="metric-number">{val}</div>'
-                    f'<div class="metric-label">{label}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-        
-        if selected_client.startswith("EMPTY TRIP"):
-            cols = st.columns(5)
-            pairs = zip(
-                cols,
-                [f"{total_trips:,}", unique_dest, unique_plants, f"{total_qty:,.2f}"],
-                ["Total Empty Trips", "Unique Destinations", "Source Plants", "Total Quantity"]
-            )
-        else:
-            cols = st.columns(6)
-            pairs = zip(
-                cols,
-                [f"{total_trips:,}", loaded_trips, empty_trips, unique_dest, unique_plants, f"{total_qty:,.2f}"],
-                ["Total Trips", "Loaded Trips", "Empty Trips", "Unique Destinations", "Plants/Sources", "Total Quantity"]
-            )
-        
-        for c, v, l in pairs:
-            _card(c, v, l)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Destination Analysis
-        if selected_client.startswith("EMPTY TRIP"):
-            st.subheader("📍 Empty Trip Destinations")
-        else:
-            st.subheader(f"📍 Trips to Each Destination — {selected_client}")
-        
-        st.caption("💡 **Click the 🔍 button** to see detailed trip information for each destination")
-        
-        if filtered.empty:
-            st.info("No trips found for the selected filters. Try adjusting your filter criteria.")
-        else:
-            # Aggregate by destination
-            agg_dict = {
-                "Total_Trips": ("Trip No", "count"),
-                "Total_Qty": ("Inv Qty", "sum"),
-                "Plants": ("Plant", lambda x: x.nunique())
-            }
-            if "Trip Type" in filtered.columns and filtered["Trip Type"].nunique() > 1:
-                agg_dict["Loaded_Trips"] = ("Trip Type", lambda x: (x == "Loaded").sum())
-                agg_dict["Empty_Trips"] = ("Trip Type", lambda x: (x == "Empty").sum())
-            
-            dest_summary = (
-                filtered.groupby("Destination")
-                .agg(**agg_dict)
-                .reset_index()
-                .sort_values("Total_Trips", ascending=False)
-                .rename(columns={
-                    "Total_Trips": "Total Trips",
-                    "Total_Qty": "Total Quantity",
-                    "Plants": "Plants Used",
-                    "Loaded_Trips": "Loaded Trips",
-                    "Empty_Trips": "Empty Trips"
-                })
-            )
-            
-            # Chart type selector
-            chart_type = st.radio("📊 Display Chart Type", ["Total Trips", "Total Quantity"], horizontal=True)
-            
-            if chart_type == "Total Trips":
-                fig = px.bar(
-                    dest_summary.head(20),
-                    x="Destination",
-                    y="Total Trips",
-                    title="Top 20 Destinations by Trip Count",
-                    color="Total Trips",
-                    color_continuous_scale="Blues",
-                    text="Total Trips"
-                )
-            else:
-                fig = px.bar(
-                    dest_summary.head(20),
-                    x="Destination",
-                    y="Total Quantity",
-                    title="Top 20 Destinations by Total Quantity",
-                    color="Total Quantity",
-                    color_continuous_scale="Greens",
-                    text="Total Quantity"
-                )
-                fig.update_traces(texttemplate="%{text:,.2f}")
-            
-            fig.update_traces(textposition="outside")
-            fig.update_layout(xaxis_tickangle=-45, height=500)
-            
-            chart_col, table_col = st.columns([1, 1])
-            
-            with chart_col:
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with table_col:
-                st.markdown("#### 📋 Destinations Summary")
-                for idx, row in dest_summary.iterrows():
-                    destination = row["Destination"]
-                    c1, c2, c3, c4, c5 = st.columns([0.4, 0.15, 0.15, 0.2, 0.1])
-                    with c1:
-                        st.write(f"**{destination}**")
-                    with c2:
-                        st.write(f"{row['Total Trips']} trips")
-                    with c3:
-                        st.write(f"📦 {row['Total Quantity']:,.2f}")
-                    with c4:
-                        if "Loaded Trips" in row:
-                            st.write(f"🟢 {row['Loaded Trips']} / 🔴 {row['Empty Trips']}")
-                    with c5:
-                        if st.button("🔍", key=f"drill_{destination}_{idx}"):
-                            show_trip_details(
-                                destination,
-                                filtered[filtered["Destination"] == destination].copy()
-                            )
-            
-            # Export functionality
-            st.divider()
-            export_buf = BytesIO()
-            with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
-                dest_summary.to_excel(writer, sheet_name="Destination Summary", index=False)
-                filtered.to_excel(writer, sheet_name="Raw Trips", index=False)
-                if not audit_df.empty:
-                    audit_df.to_excel(writer, sheet_name="Dedup Audit Log", index=False)
-            export_buf.seek(0)
-            
-            st.download_button(
-                label="⬇️ Download Summary as Excel",
-                data=export_buf,
-                file_name=f"trip_summary_{selected_client}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        trip_types = sorted(trip_df['trip_type'].dropna().unique().tolist())
+        selected_type = st.selectbox("🔄 Trip Type", ["All Types"] + trip_types)
+    
+    # Apply filters
+    client_norm = normalize_text(pd.Series([selected_client]))[0]
+    filtered = trip_df[trip_df['client'] == client_norm].copy()
+    
+    if selected_plants:
+        filtered = filtered[filtered['plant'].isin([normalize_text(pd.Series([p]))[0] for p in selected_plants])]
+    if selected_month != "All Months":
+        filtered = filtered[filtered['month'] == selected_month]
+    if selected_type != "All Types":
+        filtered = filtered[filtered['trip_type'] == selected_type]
+    
+    # Metrics
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        render_metric_card(f"{len(filtered):,}", "Total Trips")
+    with col2:
+        loaded = len(filtered[filtered['trip_type'] == 'Loaded'])
+        render_metric_card(f"{loaded:,}", "Loaded Trips")
+    with col3:
+        empty = len(filtered[filtered['trip_type'] == 'Empty'])
+        render_metric_card(f"{empty:,}", "Empty Trips")
+    with col4:
+        render_metric_card(f"{filtered['destination'].nunique():,}", "Unique Destinations")
+    with col5:
+        total_qty = filtered['inv_qty'].sum()
+        render_metric_card(f"{total_qty:,.0f}", "Total Quantity")
+    
+    # Destination Analysis
+    st.markdown("---")
+    st.markdown("### 📍 Destination Analysis")
+    
+    dest_summary = filtered.groupby('destination').agg(
+        total_trips=('trip_no', 'count'),
+        total_qty=('inv_qty', 'sum'),
+        plants_used=('plant', 'nunique')
+    ).reset_index().sort_values('total_trips', ascending=False).head(20)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig = px.bar(dest_summary, x='destination', y='total_trips', 
+                     title='Top Destinations by Trip Count',
+                     color='total_trips', color_continuous_scale='Blues')
+        fig.update_layout(xaxis_tickangle=-45, height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        fig = px.bar(dest_summary, x='destination', y='total_qty',
+                     title='Top Destinations by Quantity',
+                     color='total_qty', color_continuous_scale='Greens')
+        fig.update_layout(xaxis_tickangle=-45, height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Export
+    st.markdown("---")
+    export_data = filtered[[
+        'trip_no', 'client', 'plant', 'destination', 'trip_type', 'inv_qty', 'date_parsed'
+    ]].copy()
+    
+    csv = export_data.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Trip Data CSV", csv, f"trips_{selected_client}.csv", "text/csv")
 
-# ── TAB 2: TAT Report ──────────────────────────────────────────────────────
-if has_tat_data and tab2 is not None:
-    with (tab2 if has_trip_data and has_tat_data else st.container()):
-        if df_tat.empty:
-            st.warning("⚠️ The TAT file could not be processed. Please check the file format and required columns.")
-        else:
-            trip_filter = None
-            if has_trip_data and not filtered.empty and "Trip No" in filtered.columns:
-                trip_filter = filtered["Trip No"].unique().tolist()
-            
-            render_tat_report(
-                df_tat,
-                {'trip_nos': trip_filter} if trip_filter else None
-            )
+# ===================================================================================
+# MAIN APPLICATION
+# ===================================================================================
 
-# ── No Data Uploaded ────────────────────────────────────────────────────────
-if not has_trip_data and not has_tat_data:
-    st.markdown("""
-    <div style="text-align:center; padding: 60px 20px;">
-        <div style="font-size:5rem;">📊</div>
-        <h2 style="color:#555; margin-top: 20px;">Welcome to Trip & TAT Analytics Suite</h2>
-        <p style="color:#888; font-size:1.2rem; max-width:600px; margin:20px auto;">
-            Upload your logistics data files above to get started with comprehensive trip analysis 
-            and turnaround time monitoring.
-        </p>
-        <div style="background:#f8f9fa; border-radius:12px; padding:30px; max-width:700px; margin:30px auto; text-align:left;">
-            <h4 style="color:#333;">📋 What you can analyze:</h4>
-            <ul style="color:#666; line-height:2;">
-                <li><strong>Trip Reports:</strong> Track deliveries by client, plant, and destination</li>
-                <li><strong>Quantity Analysis:</strong> Monitor invoice quantities and trip distribution</li>
-                <li><strong>TAT Analysis:</strong> Measure loading/unloading cycle times across stages</li>
-                <li><strong>Plant Performance:</strong> Compare turnaround times across different plants</li>
-                <li><strong>Deduplication:</strong> Trip reports sum quantities; TAT drops duplicates</li>
-            </ul>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+def main():
+    st.title("🚛 Trip & TAT Analytics Suite v2")
+    st.caption("Advanced Logistics Performance Dashboard with Client-Plant Association from TAT Source Column")
+    
+    st.markdown("---")
+    
+    # File Upload Section
+    st.markdown("### 📂 Data Upload")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🚛 Trip Reports")
+        trip_files = st.file_uploader(
+            "Upload Excel files", type=["xlsx", "xls"],
+            accept_multiple_files=True, key="trip_upload",
+            help="Upload monthly trip reports containing trip details, quantities, and delivery information."
+        )
+    
+    with col2:
+        st.markdown("#### 📊 TAT Data")
+        tat_file = st.file_uploader(
+            "Upload Excel file", type=["xlsx", "xls"],
+            accept_multiple_files=False, key="tat_upload",
+            help="Upload Turnaround Time dataset. The Source/Plant column will be used for client-plant association."
+        )
+    
+    # Initialize session state
+    if 'trip_df' not in st.session_state:
+        st.session_state.trip_df = pd.DataFrame()
+    if 'tat_df' not in st.session_state:
+        st.session_state.tat_df = pd.DataFrame()
+    if 'client_mapping' not in st.session_state:
+        st.session_state.client_mapping = {}
+    if 'association' not in st.session_state:
+        st.session_state.association = ClientPlantAssociation()
+    
+    # Process Trip Reports
+    if trip_files:
+        files_data = [(f.name, f.getvalue()) for f in trip_files]
+        result = load_trip_reports(files_data)
+        
+        st.session_state.trip_df = result['df']
+        
+        for msg in result['messages']:
+            if msg['type'] == 'success':
+                st.success(msg['text'])
+            elif msg['type'] == 'warning':
+                st.warning(msg['text'])
+            elif msg['type'] == 'error':
+                st.error(msg['text'])
+            else:
+                st.info(msg['text'])
+        
+        if not result['audit_df'].empty:
+            with st.expander("🔁 Deduplication Audit Log"):
+                st.dataframe(result['audit_df'], use_container_width=True, hide_index=True)
+    
+    # Process TAT Data
+    if tat_file:
+        st.session_state.tat_df, detected_cols, tat_messages, st.session_state.association = load_tat_data(tat_file.getvalue())
+        
+        for msg in tat_messages:
+            if "✅" in msg or "📊" in msg:
+                st.success(msg)
+            elif "⚠️" in msg:
+                st.warning(msg)
+            else:
+                st.info(f"ℹ️ {msg}")
+        
+        if not st.session_state.tat_df.empty:
+            st.success(f"✅ TAT Data loaded: {len(st.session_state.tat_df):,} records")
+    
+    st.markdown("---")
+    
+    # Create client mapping if both datasets exist
+    if not st.session_state.trip_df.empty and not st.session_state.tat_df.empty:
+        st.session_state.client_mapping = create_client_mapping(
+            st.session_state.trip_df, st.session_state.tat_df
+        )
+        
+        if st.session_state.client_mapping:
+            matched = sum(1 for k, v in st.session_state.client_mapping.items() if k == v)
+            fuzzy = len(st.session_state.client_mapping) - matched
+            st.success(f"🔗 Client mapping created: {matched} exact matches, {fuzzy} fuzzy matches")
+    
+    # Tabs for analysis
+    if not st.session_state.trip_df.empty or not st.session_state.tat_df.empty:
+        tab1, tab2 = st.tabs(["🚛 Trip Analysis", "📊 TAT Report"])
+        
+        with tab1:
+            if not st.session_state.trip_df.empty:
+                render_trip_analysis(st.session_state.trip_df)
+            else:
+                st.info("Upload trip report files to see analysis")
+        
+        with tab2:
+            if not st.session_state.tat_df.empty:
+                # Pass trip numbers if available
+                trip_filters = None
+                if not st.session_state.trip_df.empty:
+                    trip_filters = {'trip_nos': st.session_state.trip_df['trip_no'].unique().tolist()}
+                render_tat_report(st.session_state.tat_df, st.session_state.association, trip_filters)
+            else:
+                st.info("Upload TAT data file to see analysis")
+    else:
+        st.info("👈 Upload your data files to begin analysis")
+        
+        # Help section
+        with st.expander("📖 How to Use - Client-Plant Association Feature"):
+            st.markdown(f"""
+            ### Predefined Clients:
+            {', '.join(PREDEFINED_CLIENTS)}
+            
+            ### How Client-Plant Association Works:
+            
+            1. **TAT Data Source Column**: The dashboard automatically detects and uses the **Source/Plant** column from your TAT data
+            2. **Automatic Association**: Each client is automatically associated with the plants/sources that appear in their TAT records
+            3. **"All Plants" Selection**: When "All Plants/Sources" is selected, ALL plants associated with the selected client are included
+            4. **Smart Filtering**: Plant options are filtered based on the selected client using actual data
+            
+            ### Required Columns:
+            
+            **Trip Report Files:**
+            - Must contain: Trip No, Client, Destination
+            - Optional: Plant, Inv Qty, Trip Type, Start Date
+            
+            **TAT Data File:**
+            - Must contain: Trip No, Client
+            - Must contain: **Source/Plant** column (any of: Plant, Source, Source Plant, Origin)
+            - TAT stage columns (values in minutes)
+            
+            ### Features:
+            - Automatic column detection
+            - Fuzzy client name matching
+            - Client-Plant association visualization
+            - Export capabilities for all tables
+            """)
+
+if __name__ == "__main__":
+    main()
